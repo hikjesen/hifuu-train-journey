@@ -28,9 +28,11 @@ class JourneyRenderer{
     this.blank=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,this.blank);
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
-    this.horizon=this.texture(pano,false,true);this.grain=this.texture(noiseSheet(),true,false);
+    this.cabinBake=this.texture(document.getElementById("cabin"),false,true);this.horizon=this.texture(pano,false,true);this.grain=this.texture(noiseSheet(),true,false);
     const labels=new LabelSheet(),cabin=new Geometry(labels),land=new Geometry(labels,true);
     buildCarriage(cabin);buildCountryside(land);buildTunnels(land);
+    const treeList=[];for(const p of land.trees.values())for(let i=0;i<p.values.length;i+=54)treeList.push(p.values.slice(i,i+7));
+    this.landLight=this.texture(makeLandLight(treeList),false,true);
     this.labels=this.texture(labels.canvas,false,true);this.atlas=this.texture(makeTreeAtlas(),false,true);
     this.room=this.buffers(cabin.parts,12,false);this.world=this.buffers(land.parts,12,false);
     this.trees=this.buffers(land.trees,9,true);
@@ -140,7 +142,7 @@ class JourneyRenderer{
     const score=BORES.reduce((s,[a,b])=>{const inside=travel-a,out=travel-b;
       return Math.max(s,inside>0&&out<0?(1-Math.exp(-inside/23)):out>=0?Math.exp(-out/18):0);},0);
     const exposed=(travel>79? .27*Math.exp(-(travel-79)/13):0)+(travel>1581?.34*Math.exp(-(travel-1581)/20):0);
-    const kit={uLens:[tangent*aspect,tangent],base,uClock:t,uTravel:travel,uOrigin:travel,uInterior:0,uMirror:0,uCabinLight:1-cover*.92,uAdapt:.65+.97*score,
+    const kit={uCabinBake:{tex:this.cabinBake,slot:7},uNear:1.05,uLandLight:{tex:this.landLight,slot:6},uLens:[tangent*aspect,tangent],base,uClock:t,uTravel:travel,uOrigin:travel,uInterior:0,uMirror:0,uCabinLight:1-cover*.92,uAdapt:.65+.97*score,
       uSky:{tex:this.horizon,slot:0},uGrain:{tex:this.grain,slot:1},uLabels:{tex:this.labels,slot:2},uTrees:{tex:this.atlas,slot:3}};
     this.dest(this.scene);gl.clearColor(.05,.045,.05,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.disable(gl.DEPTH_TEST);
     this.screen(this.skyP,kit,base);gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);
@@ -148,12 +150,12 @@ class JourneyRenderer{
     const refKey=[side,state.yaw,state.pitch,state.fov,cover];
     if(!this.refKey||this.frame%5===0&&(refKey.some((v,i)=>Math.abs(v-this.refKey[i])>.0018)||now-this.refTime>550)){
       this.dest(this.ref);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-      const mirror=v=>[v[0],v[1],-v[2]],e=base.uEye;const refl={uForward:mirror(frame.f),uRight:mirror(frame.r),uUp:mirror(frame.u),uEye:[e[0],e[1],side*3.04-e[2]],uInterior:1,uOrigin:0,uMirror:1};
+      const mirror=v=>[v[0],v[1],-v[2]],e=base.uEye;const refl={uForward:mirror(frame.f),uRight:mirror(frame.r),uUp:mirror(frame.u),uEye:[e[0],e[1],side*3.04-e[2]],uInterior:1,uOrigin:0,uMirror:1,uNear:.060};
       this.meshes(this.meshP,this.room,kit,refl,false);this.refKey=refKey;this.refTime=now;
     }
     this.dest(null);gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.disable(gl.DEPTH_TEST);
     this.screen(this.postP,kit,{...base,uWorld:{tex:this.scene.tex,slot:4},uReflection:{tex:this.ref.tex,slot:5},uSide:side,uPhoto:1+exposed,uCover:cover,uShutter:state.playing?.278:0,uPixel:[1/this.canvas.width,1/this.canvas.height]});
-    gl.enable(gl.DEPTH_TEST);this.meshes(this.meshP,this.room,kit,{...base,uInterior:1,uOrigin:0},false);
+    gl.enable(gl.DEPTH_TEST);this.meshes(this.meshP,this.room,kit,{...base,uInterior:1,uOrigin:0,uNear:.060},false);
     this.frame++;
   }
 }

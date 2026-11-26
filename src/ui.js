@@ -11,7 +11,7 @@ const stops=[
 const byId=id=>document.getElementById(id);
 const leftPad=n=>String(n).padStart(2,'0');
 const stamp=t=>leftPad(Math.floor(t/60))+':'+leftPad(Math.floor(t%60));
-const state={t:12,playing:true,yaw:0,pitch:0,fov:DEFAULT_FOV,targetYaw:0,targetPitch:0,targetFov:DEFAULT_FOV,motion:true};
+const state={t:13.6,playing:true,yaw:0,pitch:0,fov:DEFAULT_FOV,targetYaw:0,targetPitch:0,targetFov:DEFAULT_FOV,motion:true};
 const stage=byId('stage'),canvas=byId('view'),pointers=new Map();
 let lastInput=performance.now(),last=0,lastUI=-1,activeStop=-1,scrubbing=false,renderer=null,audioTrack=null;
 let immersive=false,pausedForVisibility=false,lastUIActivity=performance.now(),lastHint=-10000;
@@ -133,7 +133,8 @@ function animate(now){
   }
 }
 async function start(){
-  const picture=byId('panorama');if(!picture.complete||!picture.naturalWidth)await picture.decode();
+  const picture=byId('panorama'),cabin=byId('cabin');
+  await Promise.all([picture,cabin].map(img=>img.complete&&img.naturalWidth?Promise.resolve():img.decode()));
   const gl=canvas.getContext('webgl',{alpha:false,antialias:true,powerPreference:'high-performance',preserveDrawingBuffer:false})||canvas.getContext('experimental-webgl');
   try{if(!gl)throw Error('WebGL unavailable');renderer=new JourneyRenderer(canvas,gl,picture);canvas.setAttribute('data-renderer','webgl');}
   catch(error){console.warn('Software renderer:',error.message);const other=byId('fallback');other.hidden=false;canvas.style.display='none';renderer=new SoftwareJourney(other,picture);other.setAttribute('data-renderer','software');}

@@ -192,6 +192,52 @@ function makeTreeAtlas() {
     }
     ctx.restore();
   }
+  // A mature stand has several canopy layers and very few views through to
+  // the sky. Two cells retain that depth at distances where single branches
+  // occupy less than a display pixel. All source silhouettes are the trees
+  // just grown above, including the irregular lower boughs and fine bark.
+  const groveSources=Array.from({length:7},(_,id)=>{
+    const tile=document.createElement('canvas');tile.width=72;tile.height=192;
+    tile.getContext('2d').drawImage(atlas,(id%4)*W,(id>>2)*H,W,H,0,0,tile.width,tile.height);
+    return tile;
+  });
+  for(const target of [3,5]){
+    const mixed=target===3, r=random(mixed?13971:86137);
+    const card=document.createElement('canvas');card.width=384;card.height=512;
+    const c=card.getContext('2d'),wide=card.width;
+    const ratio=mixed?3.35:4.10;
+    const crest=u=>Math.pow(Math.max(0,Math.sin(Math.PI*u)),.39)*
+      (.83+.13*Math.sin(u*8.8+(mixed?.75:2.5))+.11*Math.sin(u*18.0+.2));
+    function drawTree(u,base,h,id,brightness) {
+      const cw=h*(id===4||id===5?.50: id===2||id===3?.47:.65)*(wide/512)/ratio*(.79+.52*r());
+      c.drawImage(groveSources[id],u*wide-cw*.5,base-h,cw,h);
+      if(brightness<.55 && r()<.24){
+        const b=h*.30;
+        c.drawImage(groveSources[id],u*wide-cw*.40,base-b,cw*.84,b);
+      }
+    }
+    for(let layer=0;layer<5;layer++){
+      const count=[29,34,36,35,28][layer],base=431+layer*17;
+      for(let n=0;n<count;n++){
+        const u=.022+.956*(n+r()*.94)/count;
+        const shape=crest(u);
+        const h=(90+337*shape)*(.68+.43*r())*[.96,1.03,.88,.69,.38][layer];
+        const pick=r();let id;
+        if(mixed)id=pick<.49?4:pick<.68?5:pick<.83?2:pick<.91?3:pick<.96?1:6;
+        else id=pick<.66?4:pick<.92?5:pick<.965?3:pick<.988?1:6;
+        drawTree(u,base+(r()-.5)*29,h,id,r());
+      }
+      // Ambient shade between decks connects neighbouring crowns. Texture
+      // outside the already occupied canopy remains transparent.
+      if(layer===1||layer===3){
+        c.globalCompositeOperation='source-atop';
+        c.fillStyle=layer===1?'rgba(29,47,39,.30)':'rgba(40,50,36,.17)';
+        c.fillRect(0,0,wide,512);c.globalCompositeOperation='source-over';
+      }
+    }
+    const tx=(target%4)*W,ty=(target>>2)*H;
+    ctx.clearRect(tx,ty,W,H);ctx.drawImage(card,tx+1,ty+1,W-2,H-2);
+  }
   return atlas;
 }
 
@@ -276,7 +322,8 @@ function buildCountryside(g) {
     return side*det(C,B)>=0 ? interp(C,B) : interp(D,C);
   }
   const soilStops=[[100,95,62],[112,104,68],[136,123,78],[152,133,84]];
-  const greenStops=[[55,66,49],[69,78,53],[85,89,57],[118,107,67]];
+  const greenStops=[[42,56,47],[55,69,51],[76,83,57],[103,98,64]];
+  const pineStops=[[37,50,45],[42,59,51],[53,68,54],[71,78,57]];
   const shoreStops=[[94,94,63],[113,107,73],[137,121,85],[158,140,102]];
   const rgbHex=(rgb)=>'#'+rgb.map(x=>Math.round(clamp(x,0,255)).toString(16).padStart(2,'0')).join('');
   function blendRamp(stops,t){
@@ -284,11 +331,19 @@ function buildCountryside(g) {
     const k=t|0;
     return rgbHex(stops[k].map((v,j)=>v+(stops[k+1][j]-v)*(t-k)));
   }
+  function woods(x,d,s){
+    const coast=s<0&&x>lakeA&&x<lakeB?lake(x)[1]:s<0?164:140;
+    const y=d-coast;
+    const folds=.25*sin(x*.0107+d*.017)+.19*sin(x*.0201-d*.0137)+.12*sin(x*.047+d*.028);
+    // Beyond the near-bank hayfields, woods return on a sequence of folds.
+    // Meadows and broad notches in different planes keep their outlines open.
+    return .47+folds+smooth(112,310,y)*.23+.13*sin(.014*x+.027*y);
+  }
   function groundColor(P,s){
     const x=P[0],d=Math.abs(P[2]);
     const t=.47+.19*sin(.026*x+d*.021)+.12*sin(x*.063-d*.047)+.11*sin(.063*d+x*.043);
     const coast=shoreDistance(x,d,s);
-    const stops=coast<7 ? shoreStops : d>280 || (x>1510&&x<2250&&d>64) ? greenStops:soilStops;
+    const stops=coast<7 ? shoreStops : (d>280 || (x>1510&&x<2250&&d>64)) ? (woods(x,d,s)>.54?pineStops:greenStops):soilStops;
     return blendRamp(stops,t);
   }
   const crops=['#c3a35a','#b39a59','#c5a75c','#ad9259','#b69c5c','#d0ac64','#a18955','#b59a65','#bb9d55','#c7a762','#a4975e','#c0a167'];
@@ -314,7 +369,7 @@ function buildCountryside(g) {
     return [-p[0]*sa+p[2]*ca,p[0]*ca+p[2]*sa];
   }
   function flatStrip(A,B,C,D,t0,t1,color) {
-    const lerp=(p,q,t)=>[p[0]+(q[0]-p[0])*t,p[1]+(q[1]-p[1])*t+.08,p[2]+(q[2]-p[2])*t];
+    const lerp=(p,q,t)=>[p[0]+(q[0]-p[0])*t,p[1]+(q[1]-p[1])*t+.028,p[2]+(q[2]-p[2])*t];
     g.quad(lerp(A,D,t0),lerp(B,C,t0),lerp(B,C,t1),lerp(A,D,t1),color,10);
   }
   for(const s of [-1,1]){
@@ -335,8 +390,8 @@ function buildCountryside(g) {
       if(field) {
         const t=fieldInfo(owner,parcelBand,s,w,nominalX);
         g.quad(...p,t.color,t.mat,p.flatMap(P=>rowUV(P,t.angle)));
-        if((i+1+(parcelBand*3)%5)%5===0) flatStrip(A,D,C,B,.955,1,'#867c52');
-        if(dMarks[j+1]%36===0) flatStrip(A,B,C,D,1-Math.min(.17,.55/(dMarks[j+1]-dMarks[j])),1,'#938651');
+        if((i+1+(parcelBand*3)%5)%5===0) flatStrip(A,D,C,B,.982,1,'#a28e5e');
+        if(dMarks[j+1]%36===0) flatStrip(A,B,C,D,1-Math.min(.14,(.26+.07*sin(i*.73))/(dMarks[j+1]-dMarks[j])),1,'#a38e5e');
       } else if (w<3.35) {
         g.quad(...p,'#716d65',15);
       } else if (coast<-5 && p.every(P=>P[1]<waterY-.45)) {
@@ -360,6 +415,10 @@ function buildCountryside(g) {
     g.tree(x,y-.006*h,d*s,w,h,type,rnd());
   }
   function treeAt(x,d,s,type,size=1){
+    // The atlas reserves 3 and 5 for full stands. Their individual larches
+    // and spruce keep their own proportions in the remaining cells.
+    if(type===3)type=2;
+    if(type===5)type=4;
     const conifer=type>=2 && type<=5;
     const h=(conifer?range(8.5,17.4):range(7.3,15.3))*size;
     const ratio=conifer?range(.31,.53):type===6?range(.67,.94):range(.40,.69);
@@ -372,13 +431,44 @@ function buildCountryside(g) {
     for(let i=0;i<groups;i++){
       const x=range(-620,3650), lakeRange=lake(x), shore=x>lakeA&&x<lakeB && s<0;
       const d=shore && rnd()<.64 ? lakeRange[1]+range(5,104) : range(s<0?180:140,755);
-      const span=range(17,66), spread=range(5,28), n=Math.floor(range(12,33)), choice=rnd(),
+      const span=range(17,66), spread=range(5,28), n=Math.floor(range(8,25)), choice=rnd(),
         type = choice<.46?4:choice<.64?5:choice<.78?2:choice<.92?3:1;
       for(let j=0;j<n;j++){
         const X=x+(rnd()+rnd()-1)*span, D=d+(rnd()+rnd()-1)*spread;
         const sp=rnd()<.78?type:(rnd()<.60?4:3);
         treeAt(X,D,s,sp,range(.81,1.23));
       }
+    }
+  }
+  function groveAt(x,d,s,shadow,size=1) {
+    const h=range(shadow?14:11,shadow?24:20)*size;
+    const w=h*(shadow?range(3.55,4.95):range(2.9,4.0));
+    placeTree(x,d,s,h,w,shadow?5:3);
+  }
+  // Several irregular planes overlap in a distant undisturbed stand. Heights
+  // change together across each alcove instead of repeating a row of crowns.
+  for(const s of [-1,1]){
+    const lim=s<0?11:8;
+    for(let band=0;band<lim;band++){
+      const start=-620+range(-12,20);
+      for(let x=start;x<3550;x+=range(s<0?18:27,s<0?37:53)){
+        const coast=(s<0&&x>lakeA&&x<lakeB)? lake(x)[1]:s<0?164:140;
+        const base=coast+([7,27,52,89,141,205,274,356,449,559,646][band]);
+        const d=base+sin(x*.012+band*1.79)*Math.min(22,4+band*3)+range(-5,9);
+        if(d>943)continue;
+        const f=woods(x,d,s);
+        if(f<(band===0?.48:.33) || (f<.58 && rnd()<.29))continue;
+        const deep=band>0&&(f>.61||rnd()<.56);
+        groveAt(x+range(-7,7),d,s,deep,range(.82,1.13)*(.85+.21*smooth(.3,.9,f)));
+      }
+    }
+  }
+  // A second storey on the middle section of track joins the open birch
+  // margins to a darker copse. It sits well back from the train window.
+  for(let x=1490;x<2280;x+=range(15,30)){
+    for(const s of [-1,1]){
+      const d=74+38*(1+sin(x*.015+s))*.5+range(0,39);
+      if(sin(x*.027+s)>.0 || woods(x,d,s)>.55) groveAt(x,d,s,rnd()<.67,range(.64,.93));
     }
   }
   // Birches follow field boundaries, with longer intervals of open view.
@@ -423,17 +513,23 @@ function buildCountryside(g) {
     }
   }
   function trackLane(x,s) {
-    const d=(s<0?29:44)+9*sin(x*.005+s*.65)+4.1*sin(x*.012+.55);
+    const d=(s<0?31:44)+12*sin(x*.005+s*.65)+4.6*sin(x*.012+.55)+1.4*sin(x*.024+s);
     return s*d;
   }
   for(const s of [-1,1]){
     for(let x=-540;x<3520;x+=8) {
       if(s<0 && x>1530 && x<2190) continue;
       const a=trackLane(x,s),b=trackLane(x+8,s);
-      const P=(X,z)=>[X,gridGround(X,z)+.065,z];
-      // Twin wheel ruts expose lighter gravel either side of a grassy crown.
-      for(const [o,h,c] of [[-1.02,.40,'#ab9c7f'],[0,.67,'#89865c'],[1.02,.40,'#aa997d']])
-        g.quad(P(x,a+o-h),P(x,a+o+h),P(x+8,b+o+h),P(x+8,b+o-h),c,o===0?10:15);
+      const P=(X,z)=>[X,gridGround(X,z)+.035,z];
+      // Grass between these two worn tyre tracks belongs to the field.
+      // Each rut tapers over a few metres as the farm lane returns to grass.
+      const wheel=.17+.085*(1+sin(x*.032+s))*.5;
+      if(sin(x*.013+s*1.5)<-.62)continue;
+      for(const o of [-.77,.77]){
+        const c=sin(x*.021+s)>.16?'#b39d73':'#a18f6a';
+        g.quad(P(x,a+o-wheel),P(x,a+o+wheel),P(x+8,b+o+wheel),P(x+8,b+o-wheel),c,15);
+      }
+
     }
   }
   function farm(x,z,size,weathered=false){
@@ -510,4 +606,49 @@ function buildCountryside(g) {
       last=[x,y+h+.07,z];
     }
   }
+  // Short brittle stubble left by the combine. A few rows at each headland
+  // preserve real scale and parallax close to the glass.
+  const stubbleColors=['#9c854e','#b59a5d','#b49b62','#c2a766','#cbb17a'];
+  for(const s of [-1,1]){
+    for(let x=-265;x<3380;x+=range(s<0?15:23,s<0?29:37)){
+      const d=range(12.0,s<0?45:42),z=d*s;
+      if(gridGround(x,z)<waterY+1.5 || Math.abs(trackLane(x,s)-z)<3.1)continue;
+      const n=Math.floor(range(6,14)),direction=range(.12,.48)+(rnd()<.32?.92:0);
+      const along=[cos(direction),sin(direction)],across=[-along[1],along[0]];
+      for(let j=0;j<n;j++){
+        const row=Math.floor(range(-3.2,3.8))*.47,alongRow=range(-3.6,3.6);
+        const X=x+along[0]*alongRow+across[0]*row,Z=z+along[1]*alongRow+across[1]*row;
+        const y=gridGround(X,Z)-.012,h=range(.115,.265);
+        const color=stubbleColors[(rnd()*stubbleColors.length)|0];
+        for(let k=0;k<3;k++){
+          const cx=X+range(-.071,.071),cz=Z+range(-.065,.065),r=range(.012,.024);
+          g.tri([cx-r,y,cz],[cx+r,y,cz+.007],[cx+(k-1)*range(.028,.084),
+            y+h*range(.75,1.16),cz+range(-.045,.045)],color,0);
+        }
+      }
+    }
+  }
+  // Bound sheaves stand in small groups where a few parcels were cut by hand.
+  // The pinched waist and loose cut ends read even as the group passes quickly.
+  for(const [px,d0,s,count] of [[203,33,-1,3],[545,35,-1,4],[938,28,-1,2],
+      [1368,46,-1,4],[2396,32,-1,3],[2766,43,-1,3],[906,36,1,3],[1879,47,1,4]]){
+    for(let j=0;j<count;j++){
+      const x=px+range(-3.6,3.6),z=(d0+range(-1.9,2.3))*s,y=gridGround(x,z);
+      const radius=range(.23,.33),waist=range(.49,.6),top=waist+range(.17,.26),lean=range(-.09,.09);
+      const n=9,b=[],w=[],head=[];
+      for(let k=0;k<n;k++){
+        const a=pi*2*k/n,co=cos(a),si=sin(a),r=radius*range(.82,1.17);
+        b.push([x+co*r,y+.016,z+si*r]);
+        w.push([x+lean+.075*co,y+waist,z+si*.075]);
+        head.push([x+lean+.14*co,y+top+range(-.055,.06),z+si*.13]);
+      }
+      for(let k=0;k<n;k++){
+        const K=(k+1)%n,col=stubbleColors[(k+((j+1)%3))%stubbleColors.length];
+        g.quad(b[k],b[K],w[K],w[k],col,0);
+        g.quad(w[k],w[K],head[K],head[k],col,0);
+      }
+      g.cyl([x+lean,y+waist-.021,z],[x+lean,y+waist+.021,z],.084,'#8c7150',0,7);
+    }
+  }
+
 }

@@ -1,9 +1,9 @@
 const PERSPECTIVE=`
 uniform vec3 uRight,uUp,uForward,uEye;
-uniform vec2 uLens;
+uniform vec2 uLens;uniform float uNear;
 vec4 projectPoint(vec3 p){
   vec3 v=p-uEye;float z=dot(v,uForward);
-  return vec4(dot(v,uRight)/uLens.x,dot(v,uUp)/uLens.y,1.000046*z-.120003,z);
+  return vec4(dot(v,uRight)/uLens.x,dot(v,uUp)/uLens.y,(1.+.00077*uNear)*z-2.00004*uNear,z);
 }
 `;
 const PANORAMA=`
@@ -31,7 +31,7 @@ void main(){vPos=aPos;vNorm=aNorm;vColor=aColor;vUv=aUv;vMat=aMat;
 const MESH_FS=`precision highp float;
 varying vec3 vPos,vNorm,vColor;varying vec2 vUv;varying float vMat,vDepth;
 uniform float uInterior,uCabinLight,uAdapt,uOrigin,uMirror;
-uniform sampler2D uGrain,uLabels;
+uniform sampler2D uGrain,uLabels,uLandLight,uCabinBake;
 uniform vec3 uEye;
 `+PANORAMA+`
 vec4 grain(vec2 p){return texture2D(uGrain,p);}
@@ -76,6 +76,11 @@ void main(){
     vec3 night=c*vec3(.49,.325,.225)*(.77+.26*n.y)*(.78+.22*cos(p.x*2.55));
     if(m>5.5 && m<6.5){lit=c*1.06;night=c*vec3(1.07,.93,.75);}
     c=mix(night,lit,uCabinLight);
+    if(uMirror<.5){vec3 eyeRay=normalize(p-vec3(0.,1.49,-.26));
+      vec2 uvb=vec2(fract(.5+atan(eyeRay.x,-eyeRay.z)*.159154943),.5+asin(clamp(eyeRay.y,-1.,1.))*.318309886);
+      vec4 bake=texture2D(uCabinBake,uvb);
+      vec3 cabinTint=mix(vec3(.55,.40,.30),vec3(1.),uCabinLight);
+      c=mix(c,bake.rgb*cabinTint,.93*bake.a);}
     gl_FragColor=vec4(c,uMirror>.5?1.:0.);return;
   }
   float dist=length(p-vec3(uOrigin,0.,0.)-uEye);
@@ -85,12 +90,13 @@ void main(){
     float closeTex=1.-smoothstep(70.,400.,dist);
     vec4 t=grain(p.xz*.052), b=grain(p.xz*.20);
     c*=.85+.26*t.r+.12*(b.g-.45)*closeTex;
+    c*=texture2D(uLandLight,vec2((p.x+768.)/4608.,(960.-p.z)/1920.)).rgb;
     if(m>10.5){
       float spacing=m<11.5?.52:.43;
-      float row=vUv.x/spacing+.038*sin(vUv.y*.27)+.16*(t.g-.5);
+      float row=vUv.x/spacing+.038*sin(vUv.y*.27)+.27*(t.g-.5)+.17*(b.g-.5);
       float detail=clamp(1.-AAWIDTH(row)*1.6,0.,1.);
       float ridge=.5+.5*cos(6.283185*row);
-      c*=1.+detail*(.34*(ridge-.5)+.15*(b.b-.5));
+      c*=1.+detail*(.17*(ridge-.5)+.19*(b.b-.5)+.15*(t.g-.5));
       c+=vec3(.095,.07,.026)*detail*pow(ridge,4.)*(.38+.62*b.b);
     }
   }else if(m>11.5 && m<12.5){
@@ -100,7 +106,7 @@ void main(){
     vec3 r=reflect(-view,wn);r.y=max(.003,r.y);
     vec3 reflected=sphereColor(r);
     float f=.40+.49*pow(1.-max(dot(view,wn),0.),2.8);
-    vec3 water=mix(vec3(.185,.256,.256),reflected,f);
+    vec3 water=mix(vec3(.210,.300,.312),reflected,f*.85);
     float sparkle=pow(max(0.,dot(r,normalize(vec3(-.68,.095,-.73)))),78.);
     c=water+sparkle*(.09+.31*b.b)*vec3(1.,.67,.31);
     c*=.965+.058*a.b;
@@ -126,7 +132,7 @@ const TREE_VS=`precision highp float;attribute vec3 aPos;attribute vec4 aTree;at
 uniform float uOrigin;varying vec2 vUv;varying float vD,vSpecies,vPhase,vH,vDist;
 `+PERSPECTIVE+`
 void main(){vec3 base=aPos-vec3(uOrigin,0.,0.);
-  vec2 flat=base.xz-uEye.xz;vec2 right=normalize(vec2(-flat.y,flat.x)+vec2(.00001,0.));
+  vec2 lateral=base.xz-uEye.xz;vec2 right=normalize(vec2(-lateral.y,lateral.x)+vec2(.00001,0.));
   vec3 p=base+vec3(right.x,0.,right.y)*(aUv.x-.5)*aTree.x+vec3(0.,aUv.y*aTree.y,0.);
   vUv=aUv;vD=projectPoint(p).w;vSpecies=aTree.z;vPhase=aTree.w;vH=aTree.y;vDist=length(base-uEye);gl_Position=projectPoint(p);}
 `;

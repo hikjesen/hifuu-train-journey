@@ -215,6 +215,17 @@ float cone(float x,float z,float cx,float cz,float ax,float az,float amp,float r
   return amp*powf(max(0.f,1.f-d),expn);
 }
 
+// A compact, uneven buttress follows a bent centreline on the caldera flank.
+float buttress(float x, float z, float x0, float z0, float x1, float z1,
+               float bend, float width, float amplitude) {
+  float dx=x1-x0, dz=z1-z0, length=sqrtf(dx*dx+dz*dz);
+  float t=((x-x0)*dx+(z-z0)*dz)/(length*length);
+  float across=((x-x0)*dz-(z-z0)*dx)/length;
+  float crest=bend*sinf(pi*clamp(t))+.23f*bend*sinf(2*pi*clamp(t));
+  float core=expf(-sq((across-crest)/width));
+  return amplitude*core*smooth(-.13f,.21f,t)*(1-smooth(.70f,1.13f,t));
+}
+
 float terrainModel(float x,float z) {
   float near=sqrtf(x*x+z*z),horizon=smooth(1200,4600,near);
   float longN=fb(x*.00027f+22,z*.00027f+8),midN=fb(x*.00086f+44,z*.00086f+31);
@@ -235,37 +246,48 @@ float terrainModel(float x,float z) {
   };
   float mound=unite(unite(main,side,220),unite(rear,unite(west,east,115),135),175);
   if (mound>28) {
-    float dx=X-650,dz=Z-6550,rr=sqrtf(dx*dx+dz*dz),a=atan2f(dx,dz);
-    // Independent lava ribs fork down the flank along curved paths. Widths, bends and
-    // tributaries vary by drainage, so no angular period repeats around the cone.
-    float spine=0;
-    constexpr int ribCount=13;
-    for (int k=0;k<ribCount;k++) {
-      float k0=unit(k*77+140),k1=unit(k*83+712),k2=unit(k*499+41),k3=unit(k*971+2);
-      float axis=(k+.78f*k0)*2*pi/ribCount-pi;
-      float bend=.19f*sinf(rr*.00089f+k1*6.28f)+.105f*sinf(rr*.00172f+k2*6.28f);
-      float delta=a-axis-bend;
-      delta-=2*pi*roundf(delta/(2*pi));
-      float offset=delta*rr,width=48+rr*(.035f+.043f*k3),amp=88.f+116.f*k1;
-      spine+=amp*expf(-sq(offset/width));
-      float branch=offset-(k%2?1.f:-1.f)*max(0.f,rr-(540+699*k3))*(.13f+.19f*k2);
-      spine+=amp*.44f*expf(-sq(branch/(width*.63f)))*smooth(620,1550,rr);
+    // Unequal lava lobes overlap and cross the fall line. The large rib on the
+    // southwest face is split by the caldera, with a shorter fan on its lee.
+    float xw=x+324.f*(fb(x*.00073f+23,z*.00065f+48)-.5f);
+    float zw=z+223.f*(fb(x*.00085f+43,z*.00074f+11)-.5f);
+    float lobes=buttress(xw,zw,790,6650,-1180,4240,282,262,292)
+               +buttress(xw,zw,622,6400,2390,5200,-305,326,215)
+               +buttress(xw,zw,-820,7430,-2430,5910,-172,261,151)
+               +buttress(xw,zw,2020,7500,3060,5980,242,239,134)
+               +buttress(xw,zw,-510,5280,-1450,4710,65,125,89)
+               -buttress(xw,zw,930,6260,110,5020,171,148,124);
+    float relief=(fb(xw*.00062f+47,zw*.00087f+12)-.5f)*241
+                +(fb(xw*.00285f+12,zw*.00215f+51)-.50f)*62;
+    float fractured=1-fabsf(2*n2(xw*.00185f+zw*.0014f+27,zw*.00128f-xw*.0007f+40)-1);
+    // Broken volcanic strata produce kinked oblique outcrops on either side of a snow bowl.
+    float qx=xw+194*(fb(xw*.0018f+41,zw*.0012f+62)-.5f);
+    float qz=zw+163*(fb(xw*.0013f+21,zw*.0022f+19)-.5f);
+    float rockRidge=0.f, amplitude=106.f,frequency=.00174f;
+    for (int octave=0;octave<4;octave++) {
+      float v=n2((qx*.94f+qz*.60f)*frequency+17+octave*23,
+                 (-qx*.34f+qz*.66f)*frequency+32+octave*11);
+      float ridged=1.f-fabsf(2.f*v-1.f);
+      rockRidge+=amplitude*(ridged*ridged-.53f);
+      float rotated=.84f*qx+.48f*qz;
+      qz=-.48f*qx+.84f*qz;qx=rotated;
+      amplitude*=.45f;frequency*=2.06f;
     }
-    float wx=x+274*(fb(x*.00084f+19,z*.00083f+8)-.5f), wz=z+233*(fb(x*.00112f+68,z*.00082f+33)-.5f);
-    float serr=(fb(wx*.00089f+48,wz*.00113f+8)-.50f)*306 +(fb(wx*.0033f+15,wz*.0037f+41)-.50f)*90;
-    float fractures=1-fabsf(2*n2(wx*.0024f+wz*.00065f+21,wz*.00155f+38)-1);
-    float central=smooth(240,820,main)*smooth(65,530,rr)*(1-smooth(2600,5400,rr));
-    float rough=.38f+.62f*smooth(90,880,mound);
-    mound+=central*(spine-54)+rough*(serr+(fractures-.62f)*72)+(n2(x*.018f+11,z*.018f+27)-.5f)*13*rough;
+    relief+=rockRidge*smooth(470,1420,mound);
+    mound+=smooth(210,1110,mound)*lobes+(.28f+.72f*smooth(120,950,mound))
+          *(relief+(fractured-.6f)*52.f+(fb(x*.010f+11,z*.010f+27)-.5f)*23.f);
   }
-  float crater=sqrtf(sq((X+20.f)/800.f)+sq((Z-6010.f)/660.f));
+  float crater=sqrtf(sq((X+140.f)/820.f)+sq((Z-6040.f)/690.f));
   mound-=170.f*expf(-powf(crater,3.1f)*1.85f);
-  mound+=79.f*expf(-sq((crater-1.08f)/.27f))*smooth(5550,6280,Z);
+  mound+=46.f*expf(-sq((crater-1.08f)/.27f))*smooth(5550,6280,Z);
   float fore=(expf(-sq((near-(3120+790*sinf(2.8f*ang)+420*cosf(4*ang)))/920)))*(75+180*(longN-.27f));
   float distant=cone(X,Z,-6050,11100,4200,2250,680,.36f,1.03f)+cone(X,Z,-9270,9280,3410,2700,510,-.12f,1.19f);
   distant+=cone(X,Z,6520,11050,4100,2840,820,-.29f,1.14f)+cone(X,Z,9500,9250,3320,3090,490,.19f,1.18f);
   fore+=116*expf(-sq((x+3750)/1750.f)-sq((z-3810)/880.f))+96*expf(-sq((x-3320)/1900.f)-sq((z-3650)/820.f));
-  return h+max(0.f,mound-25)+fore+distant;
+  float lowRelief=smooth(700,1750,near)*(1-smooth(3700,6300,near));
+  h+=lowRelief*((fb(x*.00083f+26,z*.00125f+44)-.5f)*95.f+(fb(x*.0034f+9,z*.0039f+19)-.5f)*25.f);
+  float relief=h+max(0.f,mound-25)+fore+distant;
+  float valleyFloor=-54.f+15.f*(longN-.5f)+near*.003f;
+  return mix(valleyFloor,relief,smooth(390,1630,near));
 }
 
 inline float sample(const std::vector<float>& b,float x,float z) {
@@ -277,13 +299,16 @@ inline float sample(const std::vector<float>& b,float x,float z) {
 void mountains() {
 #pragma omp parallel for schedule(static)
   for (int z=0;z<N;z++) for (int x=0;x<N;x++)terrain[z*N+x]=terrainModel(x*cell-radius,z*cell-radius);
+  // On resistant volcanic bedrock runoff leaves shallow rills. Retain the unweathered
+  // surface to constrain stream incision; unconstrained droplets cut parallel flutes.
+  std::vector<float> bedrock=terrain;
   // Individual rain paths transport sediment downhill, separating snowfields with dendritic outcrops.
   uint32_t seed=782365;
   auto rnd=[&]() {
     seed=1664525u*seed+1013904223u;
     return (seed>>8)/16777216.f;
   };
-  for (int drop=0;drop<1780000;drop++) {
+  for (int drop=0;drop<725000;drop++) {
     float x,z;
     if (drop%5) {
       x=(rnd()*11600-5300+radius)/cell;
@@ -318,7 +343,7 @@ void mountains() {
         load-=put;
       }
       else {
-        float take=min((cap-load)*.12f,-dh)*.38f;
+        float take=min((cap-load)*.085f,-dh)*.30f;
         terrain[o]-=take*.40f;
         terrain[o-1]-=take*.115f;
         terrain[o+1]-=take*.115f;
@@ -336,9 +361,14 @@ void mountains() {
       z=nz;
     }
   }
+#pragma omp parallel for schedule(static)
+  for (int i=0;i<N*N;i++) {
+    float eroded=terrain[i]-bedrock[i];
+    terrain[i]=bedrock[i]+clamp(eroded,-14.f,8.f)*.21f;
+  }
   // Gravity redistributes loose talus after fluvial incision, preserving steep bedrock walls.
   std::vector<float> work=terrain;
-  for (int pass=0;pass<5;pass++) {
+  for (int pass=0;pass<7;pass++) {
 #pragma omp parallel for schedule(static)
     for (int z=1;z<N-1;z++) for (int x=1;x<N-1;x++) {
       int i=z*N+x;
@@ -393,15 +423,30 @@ void mountains() {
     float snowHeight=smooth(snowline-78,snowline+92,h);
     float bare=smooth(.79f,1.50f,slope+.19f*wind-.18f*bowl+(.50f-cluster)*.48f);
     float darkSpur=smooth(.50f,.73f,cluster-.18f*bowl+wind*.09f);
-    float snow=clamp(snowHeight*(1-bare*mix(.17f,.89f,darkSpur)*(1-.24f*smooth(1490,2050,h))));
+    float snow=clamp(snowHeight*(1-bare*mix(.18f,.94f,darkSpur)*(1-.19f*smooth(1490,2050,h))));
+    // Thin lava beds, deep ribs and scoured windward patches show through fresh
+    // powder. Their azimuth follows the exposed face rather than constant height.
+    float shift=fb(xx*.0032f+37,zz*.0033f+16)-.5f;
+    float veins=fb((xx*.0105f+zz*.0067f)+shift*2.4f+31,
+                   zz*.0036f-xx*.0025f+shift*.7f+23);
+    float rockPatch=smooth(.49f,.73f,cluster+.16f*(broad-.5f)-.13f*bowl);
+    float exposed=smooth(.545f,.68f,veins)*rockPatch*(.18f+.58f*bare);
+    snow*=1-exposed;
     C cold=blend({149,158,188},{187,191,209},clamp(.39f+.47f*ny+.14f*bowl));
     C white=blend({251,226,211},{255,249,236},clamp(.24f+direct*.82f));
     C ice=blend(cold,white,sun);
-    ice=ice*(.987f+(.5f-grit)*.023f+micro*.014f);
+    float sastrugi=(fb(xx*.032f+zz*.013f+21,zz*.008f-xx*.006f+64)-.5f)*.060f;
+    ice=ice*(.979f+(.5f-grit)*.033f+micro*.023f+sastrugi);
     color=blend(color,ice,snow);
     // Low spruce canopy roughens the silhouette and gives the foothills their scale.
-    float forest=(1-smooth(1030,1400,h))*(1-smooth(.46f,1.f,slope))*smooth(80,180,h);
-    float height=forest*(4.3f+6.2f*micro+3.9f*grit);
+    float range=sqrtf(xx*xx+zz*zz);
+    float forest=(1-smooth(1030,1400,h))*(1-smooth(.46f,1.f,slope))*smooth(240,1150,range);
+    float canopy=fb(xx*.0084f+52,zz*.0097f+7);
+    float spruce=clamp(.72f+1.40f*(valley-.49f)+.59f*(broad-.5f));
+    C crown=blend({31,52,50},{93,104,70},clamp(.34f+1.72f*(canopy-.38f)+.37f*sun));
+    C birch=blend({83,78,50},{148,113,62},clamp((canopy-.21f)*1.65f+.25f*sun));
+    color=blend(color,blend(birch,crown,spruce),forest*(1-smooth(270,750,h))*.78f);
+    float height=forest*(3.3f+6.2f*micro+5.4f*grit+3.8f*canopy);
     trees[o]=height;
     color=color*(1+forest*((micro-.50f)*.22f+(grit-.50f)*.10f));
     surface[o]=color;
@@ -462,22 +507,22 @@ void draw() {
 // snowfields and the warm sky, even one- and two-pixel treetops convey distance.
 void plantForest() {
   const float pixelsPerRadian=W/(2*pi);
-  const int siteStep=9;
+  const int siteStep=8;
   int site=0;
   for (int iz=-10500;iz<=11400;iz+=siteStep) for (int ix=-11100;ix<=11100;ix+=siteStep,site++) {
     uint32_t seed=uint32_t(site)*1031u+9481u;
     float x=ix+unit(seed+1)*siteStep,z=iz+unit(seed+2)*siteStep,r=sqrtf(x*x+z*z);
-    if (r<900||r>11900)continue;
+    if (r<450||r>11900)continue;
     int gx=int((x+radius)/cell),gz=int((z+radius)/cell),index=gz*N+gx;
     float height=terrain[index];
-    if (height<55||height>1230||trees[index]<2)continue;
+    if (height>1230||trees[index]<2)continue;
     float u=(x+radius)/cell-gx,v=(z+radius)/cell-gz;
     height=mix(mix(terrain[index],terrain[index+1],u),mix(terrain[index+N],terrain[index+N+1],u),v);
     float forest=fb(x*.0012f+17,z*.0014f+54);
-    if (unit(seed+4)>.40f+forest*.60f)continue;
+    if (unit(seed+4)>.55f+forest*.58f)continue;
     bool conifer=unit(seed+5)<clamp(.78f+.9f*(forest-.5f)-.00043f*max(0.f,height-330));
-    float treeH=(conifer?12:8)+unit(seed+6)*(conifer?8:5);
-    float hp=treeH*pixelsPerRadian/r,wp=hp*(conifer?.15f:.35f);
+    float treeH=((conifer?10.f:7.f)+unit(seed+6)*(conifer?9.f:6.f))*(.62f+.38f*smooth(430,970,r));
+    float hp=treeH*pixelsPerRadian/r,wp=hp*(conifer?.19f:.39f);
     if (hp<.60f)continue;
     float ang=atan2f(x,z),cx=(.5f+ang/(2*pi))*W-.5f,baseY=(.5f-atan2f(height,r)/pi)*H-.5f;
     float top=baseY-hp;
@@ -486,19 +531,25 @@ void plantForest() {
     float tint=unit(seed+7);
     C native=surface[index];
     C foliage=conifer?blend({43,61,55},{74,82,54},tint):blend(blend({113,91,55},{155,118,61},tint),{145,83,48},altColor);
-    foliage=blend(native,foliage,conifer?.48f:.48f);
+    foliage=blend(native,foliage,.58f);
     C air=blend({184,157,173},{221,177,148},expf(-sq(acosf(clamp(cosf(ang-sunAz),-1,1))/1.25f)));
     float fog=clamp(1-expf(-r*.000066f)+.16f*smooth(1700,5700,r)*expf(-sq((height-290)/205.f)),0,.65f);
     for (int yy=max(0,int(floorf(top)));yy<=min(H-1,int(ceilf(baseY)));yy++) {
       float k=clamp((yy-top)/hp);
-      float profile=conifer?(.025f+.91f*k)*(1-.36f*smooth(.82f,1.f,k)):sqrtf(max(0.f,1-sq((k-.46f)/.53f)));
+      float tuft=unit(seed*3877u+uint32_t(yy)*2141u);
+      float branch=.81f+.15f*sinf(k*30.f+unit(seed+31)*4.8f)+.13f*(tuft-.5f);
+      float profile=conifer?(.04f+.97f*k)*branch*(1-.35f*smooth(.78f,1.f,k))
+                           :sqrtf(max(0.f,1-sq((k-.46f)/.53f)))*(.91f+.15f*tuft);
       for (int xx=left;xx<=right;xx++) {
         int px=(xx+W)%W,p=yy*W+px;
         if (r>depth[p]+3)continue;
         float dx=xx-cx,coverage=clamp(wp*profile+.48f-fabsf(dx))*clamp((yy-top)+.65f)*clamp(baseY-yy+.5f);
         if (coverage<.025f)continue;
-        float light=(.48f-.65f*dx/max(.6f,wp))*(.58f+.42f*(1-k));
-        C out=blend(foliage*(.80f+.26f*light),air,fog);
+        float light=(.54f-.77f*dx/max(.6f,wp))*(.58f+.42f*(1-k));
+        float speckle=unit(seed*947u+uint32_t(yy)*2917u+uint32_t(px)*7411u);
+        float roundness=sqrtf(max(0.f,1-sq(dx/max(.5f,wp*profile))));
+        float crownLight=.67f+.35f*light+.17f*roundness+(.12f+.09f*!conifer)*(speckle-.5f);
+        C out=blend(foliage*crownLight,air,fog);
         C bg{float(img[p*3]),float(img[p*3+1]),float(img[p*3+2])};
         out=blend(bg,out,coverage*.83f);
         pixel(px,yy,out);

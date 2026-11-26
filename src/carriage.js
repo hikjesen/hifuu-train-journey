@@ -200,8 +200,8 @@ function buildCarriage(g) {
     for(const offset of [-.224,.224]){
       const center=z+offset, width=.304;
       const profile=[[-.053,-.028],[-.047,.003],[-.020,.005],[.034,.006],
-        [.051,.002],[.067,-.009],[.077,-.030],[.082,-.067],
-        [.090,-.126],[.098,-.172],[.0995,-.181]];
+        [.051,.002],[.067,-.009],[.077,-.030],[.082,-.067],[.087,-.083],[.092,-.103],
+        [.095,-.126],[.097,-.149],[.098,-.172],[.0995,-.181]];
       const steps=detail ? 12 : 5, fabric=[];
       const folds=detail ? profile : profile.filter((v,i)=>i%2===0);
       for(let j=0;j<folds.length;j++){
@@ -215,7 +215,7 @@ function buildCarriage(g) {
           if(yy<1.180){
             const pu=Math.max(-1,Math.min(1,(zz-z)/.411)),pv=Math.max(0,Math.min(1,(yy-.625)/.553));
             const cushion=backPoint(pu,pv);
-            depth=Math.max(depth,(cushion[0]-topX)*front+.0038+crease*.70);
+            depth=Math.max(depth,(cushion[0]-topX)*front+.010+crease*.75);
           }
           row.push([topX+front*depth,yy,zz]);
         }
@@ -228,7 +228,7 @@ function buildCarriage(g) {
       }
       if(detail){
         for(let k=0;k<steps;k++){
-          const a=fabric[9][k].slice(),b=fabric[9][k+1].slice();
+          const hem=fabric[fabric.length-2],a=hem[k].slice(),b=hem[k+1].slice();
           a[0]+=front*.0008;b[0]+=front*.0008;
           rod(a,b,.0007,'#d9d0b7',MAT.linen,5);
         }
