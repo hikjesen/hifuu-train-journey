@@ -53,7 +53,7 @@ void main(){
     }else if(m<2.5 && m>1.5){spec=.70;varnish=.44;c*=.94+.09*grain(p.xy*vec2(1.4,12.)+p.z).b;}
     else if(m<3.5 && m>2.5){
       vec2 uv=abs(n.x)>.55?p.zy:(abs(n.y)>.65?p.xz:p.xy);
-      vec3 t=grain(uv*3.7);float fold=.93+.12*t.r;
+      vec3 t=grain(uv*3.7).rgb;float fold=.93+.12*t.r;
       c*=fold*(.945+.105*t.b);varnish=.075;
     }else if(m>3.5 && m<4.5){c*=.95+.08*grain(p.xy*2.1+p.z).r;varnish=.09;}
     else if(m>4.5 && m<5.5){c*=.93+.10*grain(p.xy*7.+p.z).b;varnish=.08;}

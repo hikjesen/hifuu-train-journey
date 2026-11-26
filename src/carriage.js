@@ -107,11 +107,11 @@ function buildCarriage(g) {
       [1.665,.134,1.420],[1.42,.091,1.429],[1.347,.065,1.431],
       [1.286,.073,1.413],[1.126,.112,1.398],[.983,.146,1.403]
     ];
-    const ribs=showWeave?20:14, center=x+hand*1.135;
+    const ribs=showWeave ? 30 : 18, center=x+hand*1.135;
     const rings=levels.map(([y,width,z],j)=>{
       const row=[];
       for(let k=0;k<=ribs;k++){
-        const u=k/ribs, pinch=j===5?.38:j===4||j===6?.69:1;
+        const u=k/ribs, pinch=j===5 ? .38 : (j===4||j===6 ? .69 : 1);
         const wave=Math.sin(u*tau*3.5+phase+.19*Math.sin(j*.66))*.020*pinch;
         const drape=(j===8? .010*Math.cos(tau*3.5*u+phase):0);
         row.push([center+hand*(u-.54)*width,y+drape,s*(z+wave-.009*Math.sin(pi*u))]);
@@ -163,18 +163,76 @@ function buildCarriage(g) {
     box(x-side*.186,.397,z+outward*(span*.50),.451,.039,.021,c.woodEdge,MAT.wood);
     upholstered(x-side*.189,.491,z,.49,.167,span,.059,-side*.06,materialColor,detail,outward);
     upholstered(x+.004*side,yBack,z,.148,.721,span,.064,side*.125,materialColor,detail,outward);
-    // The pale removable antimacassars fold over the upper face, revealing moquette at either side.
-    const topX=x+side*.045, topY=1.242;
+    const front=-side;
+    const backPoint=(u,v)=>{
+      const yy=.625+v*.553, bell=Math.sin(pi*v)**.65;
+      const sideRoll=(1-u*u)**.68, stitch=1-.64*Math.exp(-u*u*210);
+      const offset=.003+.028*bell*sideRoll*stitch;
+      return [x+side*.004+side*.125*(yy-yBack)+front*(.074+offset),yy,z+.411*u];
+    };
+    const cols=detail?16:10, rows=detail?8:5;
+    for(let j=0;j<rows;j++){
+      const v=j/rows,v2=(j+1)/rows;
+      for(let i=0;i<cols;i++){
+        const u=i/cols*2-1,u2=(i+1)/cols*2-1;
+        quad(backPoint(u,v),backPoint(u2,v),backPoint(u2,v2),backPoint(u,v2),materialColor,MAT.velvet);
+      }
+    }
+    const seams=[];
+    for(let j=0;j<=8;j++){
+      const p=backPoint(0,j/8);p[0]+=front*.0015;seams.push(p);
+    }
+    if(detail) polyline(seams,.00175,'#344c44',MAT.velvet,5);
+    else for(let j=1;j<seams.length;j++){
+      const a=seams[j-1],b=seams[j],w=.0015;
+      quad([a[0],a[1],a[2]-w],[a[0],a[1],a[2]+w],[b[0],b[1],b[2]+w],[b[0],b[1],b[2]-w],'#344c44',MAT.velvet);
+    }
+    if(detail) {
+      for(let j=1;j<24;j++){
+        const a=backPoint(.009,j/24),b=backPoint(.009,j/24+.014);
+        a[0]+=front*.0014;b[0]+=front*.0014;
+        rod(a,b,.0006,'#789080',MAT.velvet,5);
+      }
+    }
+    // Cloth follows the rolled edge and lifts slightly at the hem. Narrow stitched hems catch the window.
+    const topX=x+side*.048,topY=1.251;
+    const clothColors=['#cbc3aa','#cdc5ac','#d0c8af','#d2cab1','#d0c8ae','#cec5ac'];
     for(const offset of [-.224,.224]){
-      const center=z+offset, ww=.301, l=center-ww/2, r=center+ww/2, fx=topX-side*.075;
-      const leg=(u,d,off=0)=>[fx-side*(d*.129+off),topY-d,u];
-      quad([topX+side*.042,topY+.002,l],[topX+side*.042,topY+.002,r],
-           [fx+side*.013,topY+.009,r],[fx+side*.013,topY+.009,l],'#c7bba0',MAT.linen);
-      quad([fx+side*.013,topY+.009,l],[fx+side*.013,topY+.009,r],
-           leg(r,.035,.001),leg(l,.035,.001),c.headrest,MAT.linen);
-      const d=.173+((offset>0)?.011:0);
-      quad(leg(l,.034,.001),leg(r,.034,.001),leg(r-.008,d,.0015),leg(l+.006,d-.002,.0015),c.headrest,MAT.linen);
-      quad(leg(l+.005,d-.011,.002),leg(r-.006,d-.011,.002),leg(r-.008,d-.016,.0024),leg(l+.006,d-.016,.0024),'#b9af94',MAT.linen);
+      const center=z+offset, width=.304;
+      const profile=[[-.053,-.028],[-.047,.003],[-.020,.005],[.034,.006],
+        [.051,.002],[.067,-.009],[.077,-.030],[.082,-.067],
+        [.090,-.126],[.098,-.172],[.0995,-.181]];
+      const steps=detail ? 12 : 5, fabric=[];
+      const folds=detail ? profile : profile.filter((v,i)=>i%2===0);
+      for(let j=0;j<folds.length;j++){
+        const row=[],[df,dy]=folds[j],hanging=Math.max(0,(-dy-.019)/.162);
+        for(let k=0;k<=steps;k++){
+          const u=k/steps, scallop=Math.sin(u*3.7*pi+.5)+(u-.5)*1.45;
+          const crease=.0025*Math.sin(u*5.7*pi+.5+j*.06)*(.30+.70*hanging);
+          const drop=-.0033*scallop*hanging*hanging+(offset<0 ? .0025 : -.0010)*hanging;
+          const yy=topY+dy+drop,zz=center+width*(u-.5)*(1-.041*hanging)+.0020*Math.sin(2*u*pi+j*.38);
+          let depth=df+crease;
+          if(yy<1.180){
+            const pu=Math.max(-1,Math.min(1,(zz-z)/.411)),pv=Math.max(0,Math.min(1,(yy-.625)/.553));
+            const cushion=backPoint(pu,pv);
+            depth=Math.max(depth,(cushion[0]-topX)*front+.0038+crease*.70);
+          }
+          row.push([topX+front*depth,yy,zz]);
+        }
+        fabric.push(row);
+      }
+      for(let j=1;j<fabric.length;j++) for(let k=0;k<steps;k++){
+        const i=Math.min(5,Math.floor((.5+.47*Math.sin((k+.5)/steps*5.7*pi+.5+j*.06))*6));
+        const tone=j===fabric.length-1?'#b8af96':clothColors[i];
+        quad(fabric[j-1][k],fabric[j-1][k+1],fabric[j][k+1],fabric[j][k],tone,MAT.linen);
+      }
+      if(detail){
+        for(let k=0;k<steps;k++){
+          const a=fabric[9][k].slice(),b=fabric[9][k+1].slice();
+          a[0]+=front*.0008;b[0]+=front*.0008;
+          rod(a,b,.0007,'#d9d0b7',MAT.linen,5);
+        }
+      }
     }
     // Dark Bakelite arm cap and two brushed rail supports on the aisle end.
     const az=z+outward*(span/2+.016);
@@ -191,7 +249,7 @@ function buildCarriage(g) {
   }
 
   function sideTable(x,s,isHero) {
-    const y=isHero?.917:.793, z=s*1.216, w=isHero?.91:.576, d=isHero?.544:.526;
+    const y=isHero ? .917 : .793, z=s*1.216, w=isHero ? .91 : .576, d=isHero ? .544 : .526;
     horizontalSlab(x,y-.018,z,w,d,.036,.052,'#946c48','#b5976c');
     for(const t of [-1,1]){
       const xx=x+t*w*.28;
@@ -200,9 +258,10 @@ function buildCarriage(g) {
     }
   }
 
-  function carriageCeiling() {
-    const profile=[[-1.52,2.357],[-1.475,2.402],[-1.37,2.453],[-1.19,2.499],[-.92,2.538],
+  const roofProfile=[[-1.52,2.357],[-1.475,2.402],[-1.37,2.453],[-1.19,2.499],[-.92,2.538],
       [-.58,2.566],[0,2.582],[.58,2.566],[.92,2.538],[1.19,2.499],[1.37,2.453],[1.475,2.402],[1.52,2.357]];
+  function carriageCeiling() {
+    const profile=roofProfile;
     for(let j=1;j<profile.length;j++){
       const [z,y]=profile[j-1],[zz,yy]=profile[j];
       quad([-halfLength,y,z],[halfLength,y,z],[halfLength,yy,zz],[-halfLength,yy,zz],c.ceiling,MAT.enamel);
@@ -230,6 +289,7 @@ function buildCarriage(g) {
       }
       // Rectangular slotted ventilation grilles alternate with the opal lamps.
       const xx=x+1.006;
+      if(xx+.211>halfLength)continue;
       box(xx,2.563,0,.422,.015,.183,'#a79b84',MAT.metal);
       for(let a=-6;a<=6;a++)
         box(xx+a*.026,2.552,0,.009,.007,.134,'#726f61',MAT.metal);
@@ -239,7 +299,12 @@ function buildCarriage(g) {
   function endWall(sign) {
     const x=sign*8.633, inner=x-sign*.065;
     box(x,1.19,0,.105,2.38,3.04,'#876444',MAT.wood);
-    box(x,2.418,0,.104,.23,2.44,'#b09b7c',MAT.enamel);
+    for(let j=1;j<roofProfile.length;j++){
+      const [z0,h0]=roofProfile[j-1],[z1,h1]=roofProfile[j],xx=x-sign*.053;
+      quad([xx,2.36,z0],[xx,2.36,z1],[xx,h1,z1],[xx,h0,z0],'#b3a184',MAT.enamel);
+      quad([xx-sign*.003,h0-.015,z0],[xx-sign*.003,h1-.015,z1],[xx-sign*.003,h1,z1],[xx-sign*.003,h0,z0],
+        '#8e806a',MAT.wood);
+    }
     for(const z of [-1.21,-.81,.81,1.21]){
       box(inner,1.14,z,.030,1.82,.329,'#75563f',MAT.wood);
       for(const h of [.251,2.024]) box(inner-sign*.018,h,z,.018,.022,.334,'#987450',MAT.wood);
@@ -309,8 +374,18 @@ function buildCarriage(g) {
     return {p,rect,line,mark,dot};
   }
   function observationBook() {
-    const x=-.150,z=-1.339,y=.926;
-    const b=layout(x,y,z,-.112,.041);
+    const x=-.150,z=-1.339,y=.923;
+    const shadow=layout(x+.003,.9173,z+.003,-.112);
+    shadow.rect(0,0,.321,.192,'#7f5e41',MAT.wood);
+    shadow.rect(0,0,.317,.188,'#72563d',MAT.wood,.00016);
+    const b=layout(x,y,z,-.112,.027);
+    const boundary=[[-.160,-.094],[.157,-.094],[.157,.094],[-.160,.094]];
+    for(let j=0;j<4;j++){
+      const pt=b.p(...boundary[j]),next=b.p(...boundary[(j+1)%4]);
+      quad([pt[0],.9177,pt[2]],[next[0],.9177,next[2]],next,pt,'#445148',MAT.velvet);
+      const upper=b.p(...boundary[j],.0025),upperNext=b.p(...boundary[(j+1)%4],.0025);
+      quad(pt,next,upperNext,upper,'#b59d7c',MAT.paper);
+    }
     b.rect(-.002,-.0005,.317,.188,'#45584d',MAT.velvet,0);
     b.rect(-.001,0,.307,.184,'#b19e7a',MAT.paper,.0020);
     b.rect(-.077,0,.149,.179,'#d7c6a3',MAT.paper,.0030);
@@ -333,7 +408,7 @@ function buildCarriage(g) {
       const seg=r===R?60:40;
       for(let j=0;j<seg;j++){
         const a=j*tau/seg,d=(j+1)*tau/seg;
-        b.line([center[0]+Math.cos(a)*r,center[1]+Math.sin(a)*r],[center[0]+Math.cos(d)*r,center[1]+Math.sin(d)*r],r===R?.00068:.00032,ink,.0048);
+        b.line([center[0]+Math.cos(a)*r,center[1]+Math.sin(a)*r],[center[0]+Math.cos(d)*r,center[1]+Math.sin(d)*r],r===R ? .00068 : .00032,ink,.0048);
       }
     }
     for(let j=0;j<24;j++){
@@ -342,7 +417,7 @@ function buildCarriage(g) {
     }
     for(let j=1;j<=47;j++) {
       const a=j*2.39996,d=R*.925*Math.sqrt(j/48);
-      b.dot(center[0]+Math.cos(a)*d,center[1]+Math.sin(a)*d,j%7===0?.0016:.00083,'#65644e',.0053);
+      b.dot(center[0]+Math.cos(a)*d,center[1]+Math.sin(a)*d,j%7===0 ? .0016 : .00083,'#65644e',.0053);
     }
     const path=[[.035,-.011],[.050,-.0005],[.056,.012],[.074,.017],[.077,.032],[.091,.040],[.105,.031]];
     for(let k=1;k<path.length;k++)b.line(path[k-1],path[k],.00069,'#8d6b42',.0056);
