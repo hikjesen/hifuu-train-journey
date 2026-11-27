@@ -92,6 +92,8 @@ constexpr int CN=544, CY=43;
 constexpr float cloudSpan=64.f,base=2.05f,thick=1.72f;
 std::vector<float> cloud(CN*CN*CY),sunlight(CN*CN*CY);
 constexpr float sunAz=-42.8f*pi/180,sunAlt=7.7f*pi/180;
+constexpr float moonAz=19.2f*pi/180, moonAlt=19.65f*pi/180;
+constexpr float moonRadius=.37f*pi/180;
 inline int idx(int x,int z,int y) {
   return (y*CN+z)*CN+x;
 }
@@ -113,7 +115,7 @@ void clouds() {
     struct Bank {
       float x,z,a,b,amplitude,angle;
     };
-    static constexpr Bank banks[]={{-8.8f,14.8f,6.9f,2.4f,.57f,-.14f},{-3.7f,4.8f,3.2f,1.1f,.40f,-.21f},{2.7f,5.8f,1.9f,.9f,.43f,-.15f},{8.9f,7.9f,5.8f,2.05f,.54f,.23f},{3.1f,12.8f,4.5f,.8f,.35f,-.16f},{-12.f,24.9f,13.8f,2.8f,.48f,-.19f},{5.f,23.7f,8.f,1.4f,.37f,.12f},{10,-2,5,1.7f,.45f,.2f},{-4,-12,4,2,.4f,-.5f},{-12,-12,4,2,.44f,.15f}};
+    static constexpr Bank banks[]={{-8.8f,14.8f,6.9f,2.4f,.57f,-.14f},{-3.7f,4.8f,3.8f,1.1f,.33f,-.21f},{-5.6f,10.0f,3.6f,1.2f,.37f,-.28f},{5.3f,5.6f,1.8f,.85f,.37f,-.26f},{9.3f,8.0f,5.1f,1.62f,.49f,.31f},{3.1f,12.8f,4.5f,.8f,.35f,-.16f},{-12.f,24.9f,13.8f,2.8f,.48f,-.19f},{5.f,23.7f,8.f,1.4f,.37f,.12f},{10,-2,5,1.7f,.45f,.2f},{-4,-12,4,2,.4f,-.5f},{-12,-12,4,2,.44f,.15f}};
     float sculpt=0;
     for (const auto& b:banks) {
       float dx=xx-b.x,dz=zz-b.z;
@@ -122,6 +124,12 @@ void clouds() {
     }
     weather-=.27f*expf(-sq((xx+.2f)/1.85f)-sq((zz-5.3f)/2.0f));
     weather-=.43f*expf(-sq((xx+10.7f)/3.2f)-sq((zz-11.7f)/3.1f));
+    // Crosswinds open a break through the two-kilometre cloud layer over the
+    // northeast shoulder. The gap is three-dimensional, and its edges remain noisy.
+    float acrossMoon=xx*cosf(moonAz)-zz*sinf(moonAz);
+    float alongMoon=xx*sinf(moonAz)+zz*cosf(moonAz);
+    float breakShape=acrossMoon+.61f*(fb(xx*.53f+53,zz*.31f+17)-.5f);
+    weather-=.73f*expf(-sq(breakShape/(1.42f+.057f*max(0.f,alongMoon)))-sq((alongMoon-7.75f)/4.25f));
     weather+=sculpt+.52f*(fb(xx*.38f+8.3f,zz*.41f+72)-.5f);
     for (int k=0;k<CY;k++) {
       float y=k/float(CY-1), adv=.52f*y;
@@ -144,29 +152,104 @@ void clouds() {
   }
 }
 
-C sky(float a,float el,int px,int py) {
-  float azdiff=acosf(clamp(cosf(a-sunAz),-1,1)), glow=expf(-sq(azdiff/1.05f));
-  float h=max(el,0.f),m=sinf(h);
-  C horizon=blend({250,185,162},{255,222,139},glow), lower=blend({235,166,185},{255,192,140},glow), middle=blend({157,132,181},{228,160,172},glow*.81f), upper=blend({82,89,139},{118,113,159},glow*.49f);
-  C col=blend(horizon,lower,smooth(-.035f,.17f,h));
-  col=blend(col,middle,smooth(.06f,.48f,h));
-  col=blend(col,upper,1-expf(-max(0.f,h-.30f)*2.45f));
-  float sx=sinf(a)*cosf(h),sz=cosf(a)*cosf(h),sunD=acosf(clamp(cosf(h)*cosf(sunAlt)*cosf(a-sunAz)+m*sinf(sunAlt),-1,1));
-  float seaHaze=expf(-sq(h/.036f));
-  col=blend(col,{255,199,158},seaHaze*.19f);
-  col=blend(col,{255,220,157},.36f*expf(-sunD*5.4f));
-  col=blend(col,{255,239,190},.7f*expf(-sunD*32));
-  col=blend(col,{255,253,226},1-smooth(.0041f,.0051f,sunD));
-  // High, sheared wisps. Anisotropic curling density over a separate 8 km plane.
-  if (h>.008f) {
-    float dx=sx/(m+.055f)*8,dz=sz/(m+.055f)*8;
-    float warp=fb(dx*.14f+23,dz*.17f+45)-.5f;
-    float streak=fb(dx*.065f+dz*.047f+33,dz*.64f-dx*.13f+warp*1.8f+5);
-    float envelope=fb(dx*.075f+48,dz*.075f+17);
-    float fine=fb(dx*.11f+44,dz*2.8f-dx*.34f+warp*3.2f+23);
-    float density=clamp((streak-.39f)*1.9f)*smooth(.25f,.66f,envelope)*(.43f+.62f*fine);
-    col=blend(col,blend({245,192,203},{255,221,173},glow),density*smooth(.008f,.065f,h)*.75f);
+// The illuminated lunar hemisphere is projected onto an actual sphere. The
+// sun vector sets the direction of the bright limb in the local east/up basis.
+C crescent(C air, float azimuth, float elevation) {
+  float da=azimuth-moonAz, se=sinf(elevation), ce=cosf(elevation);
+  float u=ce*sinf(da)/moonRadius;
+  float v=(se*cosf(moonAlt)-ce*sinf(moonAlt)*cosf(da))/moonRadius;
+  float r2=u*u+v*v;
+  if (r2>1.3f || cosf(da)<0.f) return air;
+  float sphereDepth=sqrtf(max(0.f,1.f-r2));
+  float delta=sunAz-moonAz;
+  float east=cosf(sunAlt)*sinf(delta);
+  float up=sinf(sunAlt)*cosf(moonAlt)-cosf(sunAlt)*sinf(moonAlt)*cosf(delta);
+  float toward=-(sinf(sunAlt)*sinf(moonAlt)+cosf(sunAlt)*cosf(moonAlt)*cosf(delta));
+  float incidence=u*east+v*up+sphereDepth*toward;
+  float disc=1.f-smooth(.87f,1.15f,sqrtf(r2));
+  float sunlit=smooth(-.045f,.17f,incidence)*(.88f+.12f*sqrtf(max(0.f,incidence)));
+  C earthshine=blend(air,{182,194,225},.055f);
+  return blend(air,blend(earthshine,{255,244,216},sunlit),disc);
+}
+
+// A seven-kilometre ice layer carries a feathered, curved stream of falling
+// crystals. The shear, spacing and finite longitudinal extent vary independently.
+C highClouds(C air, float sx, float sz, float elevation, float warmth) {
+  float m=sinf(elevation);
+  if (m<.012f) return air;
+  float x=sx*7.6f/(m+.018f), z=sz*7.6f/(m+.018f);
+  float swirl=fb(x*.14f+23,z*.16f+45)-.5f;
+  float drift=fb(x*.08f+z*.036f+33,z*.56f-x*.13f+swirl*2.0f+5);
+  float mantle=fb(x*.072f+48,z*.077f+17);
+  float hair=fb(x*.16f+44,z*2.3f-x*.36f+swirl*3.6f+23);
+  float veil=smooth(.40f,.72f,drift)*smooth(.31f,.72f,mantle)*(.32f+.87f*hair);
+  C thinIce=blend({205,175,213},{255,211,160},warmth);
+  air=blend(air,thinIce,veil*.41f*smooth(.016f,.075f,m));
+
+  // Cirrus uncinus starts in little fallstreak-generating cells. Each tuft has
+  // a finite hooked tail as the descending crystals encounter a different wind.
+  // Head placement and independently varying lengths leave open gaps between them.
+  struct Fallstreak { float x, z, length, width, bend, tilt, weight; };
+  static constexpr Fallstreak sources[]={
+    {-14.4f,16.0f, 8.0f,1.16f,-2.12f,-.14f,.76f},
+    {-8.1f,14.7f, 6.6f,.93f, 1.66f, .19f,.89f},
+    {-5.9f,18.3f, 5.7f,.80f,-1.33f,-.12f,.68f},
+    {-.5f,16.6f, 7.8f,1.05f,-1.78f,-.18f,.97f},
+    { 4.4f,14.4f, 5.0f,.76f, 1.47f, .03f,.62f},
+    {10.2f,15.5f, 4.6f,.52f,-1.08f,-.24f,.57f}
+  };
+  if (x < -21.f || x > 20.f || z < 9.f || z > 23.f) return air;
+  float tau=0.f, upper=0.f;
+  float eddy=fb(x*.33f+22,z*.37f+37)-.5f;
+  float shear=fb(x*.42f+45,z*.20f+62)-.5f;
+  for (const auto& cell:sources) {
+    float dx=x-cell.x,dz=z-cell.z;
+    float along=dx*cosf(cell.tilt)+dz*sinf(cell.tilt);
+    if (along < -3.f || along > cell.length+2.f) continue;
+    float across=-dx*sinf(cell.tilt)+dz*cosf(cell.tilt);
+    float t=clamp(along/cell.length);
+    float curve=cell.bend*(.71f*sinf(t*1.62f)+.29f*t*t)+.66f*shear+.46f*eddy;
+    float drift=across-curve;
+    float head=expf(-sq(along/1.80f)-sq((across-.72f*eddy)/(cell.width*1.17f)));
+    float spread=cell.width*(.67f+.93f*t)+.22f*shear;
+    float tail=smooth(-.7f,1.5f,along)*(1-smooth(.44f,1.05f,t));
+    tail*=expf(-sq(drift/spread));
+    float broad=fb(along*.38f+37,drift*.62f+shear*1.78f+11);
+    float fiber=fb(along*.28f+drift*.17f+51,drift*2.15f+1.13f*broad+1.91f*shear+23);
+    float fine=fb(along*.55f+43,drift*4.51f+1.65f*shear+29);
+    float texture=smooth(.29f,.72f,.31f*broad+.47f*fiber+.22f*fine);
+    float amount=cell.weight*(head*(.31f+.84f*texture)+tail*(.12f+1.22f*texture));
+    tau+=amount;
+    upper+=amount*clamp(.60f-drift*.23f+.23f*(fiber-.5f)+head*.12f);
   }
+  if (tau<.002f) return air;
+  C iceShade=blend({157,140,195},{225,137,158},warmth);
+  C iceSun=blend({249,168,193},{255,208,147},warmth);
+  C ice=blend(iceShade,iceSun,clamp(upper/tau));
+  return blend(air,ice,1.f-expf(-tau*1.19f));
+}
+
+C sky(float a,float el,int px,int py) {
+  float h=max(el,0.f), m=sinf(h);
+  float azdiff=acosf(clamp(cosf(a-sunAz),-1.f,1.f));
+  float glow=expf(-powf(azdiff/.92f,2.22f));
+  float sx=sinf(a)*cosf(h), sz=cosf(a)*cosf(h);
+  float sunD=acosf(clamp(cosf(h)*cosf(sunAlt)*cosf(a-sunAz)+m*sinf(sunAlt),-1.f,1.f));
+
+  // Long optical paths on the solar side carry copper, apricot and rose. The
+  // shallower eastern line of sight opens directly into cool twilight above it.
+  C eastern=blend({220,166,180},{120,125,190},smooth(.025f,.37f,h));
+  eastern=blend(eastern,{53,67,128},1.f-expf(-max(0.f,h-.255f)*2.42f));
+  C western=blend({255,212,124},{249,151,144},smooth(.045f,.32f,h));
+  western=blend(western,{117,99,163},1.f-expf(-max(0.f,h-.25f)*2.52f));
+  C col=blend(eastern,western,glow);
+  float afterglow=expf(-sq((h-.13f)/.135f))*(1.f-glow);
+  col=blend(col,{215,152,189},afterglow*.23f);
+  col=blend(col,{255,192,108},.49f*expf(-sunD*4.9f));
+  col=blend(col,{255,226,150},.74f*expf(-sunD*21.f));
+  col=blend(col,{255,252,221},1.f-smooth(.0041f,.0051f,sunD));
+  col=crescent(col,a,h);
+  col=highClouds(col,sx,sz,h,glow);
   if (h>.006f) {
     float t=base/max(m,.001f),end=min(54.f,(base+thick)/max(m,.001f));
     if (end>t) {
@@ -186,9 +269,16 @@ C sky(float a,float el,int px,int py) {
         if (d<.001f)continue;
         float fineSun=(edge-detail(xx-.71f,zz+.66f,yy+.55f));
         float lit=clamp(vol(sunlight,xx,zz,yy)+fineSun*.83f+.09f*expf(-d*1.35f)),norm=yy/(CY-1);
-        C shadow=blend({116,111,155},{168,133,160},.39f*glow+.23f*norm);
-        C light=blend({255,196,191},{255,230,171},glow*.86f);
-        C local=blend(shadow,light,clamp(powf(lit,.76f)*(.94f+.14f*norm)+norm*.10f));
+        float lightAngle=clamp(.24f+.64f*glow+.12f*norm);
+        C shadow=blend({91,95,156},{165,120,168},lightAngle);
+        C light=blend({249,165,193},{255,215,149},clamp(glow*.93f+.10f*norm));
+        float transmitted=smooth(.24f,.96f,lit+.07f*norm);
+        float blueBounce=.12f*(1.f-expf(-d))*(1.f-.68f*glow);
+        shadow=blend(shadow,{105,105,175},blueBounce);
+        C local=blend(shadow,light,transmitted*(.87f+.11f*norm));
+        // Fine sunward edges collect a little forward-scattered golden light.
+        float rim=expf(-d*2.1f)*smooth(.38f,.96f,lit)*(.17f+.22f*glow);
+        local=blend(local,blend({255,196,209},{255,229,161},glow),rim);
         float distHaze=clamp((t-9.f)/58.f,0,.49f);
         local=blend(local,col,distHaze*.72f);
         float tau=1-expf(-d*step*1.55f);
