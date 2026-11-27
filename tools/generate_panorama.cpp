@@ -1,8 +1,9 @@
 // Deterministic, image-free source for the far-field environment. World x is east,
 // z is north, and the second channel of the height field is z. Colours are sRGB.
 // Build: c++ -std=c++17 -O3 -fopenmp tools/generate_panorama.cpp -o /tmp/hifuu-env
-// Run: /tmp/hifuu-env 7168 /tmp/hifuu-env.ppm
+// Run: /tmp/hifuu-env 7168 /tmp/hifuu-env.ppm /tmp/hifuu-sky.pam
 //      magick /tmp/hifuu-env.ppm -sampling-factor 1x1 -quality 92 src/horizon.jpg
+//      magick /tmp/hifuu-sky.pam -define webp:lossless=true -define webp:exact=true src/sky-layers.webp
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -92,8 +93,7 @@ constexpr int CN=544, CY=43;
 constexpr float cloudSpan=64.f,base=2.05f,thick=1.72f;
 std::vector<float> cloud(CN*CN*CY),sunlight(CN*CN*CY);
 constexpr float sunAz=-42.8f*pi/180,sunAlt=7.7f*pi/180;
-constexpr float moonAz=19.2f*pi/180, moonAlt=19.65f*pi/180;
-constexpr float moonRadius=.37f*pi/180;
+constexpr float moonAz=19.2f*pi/180;
 inline int idx(int x,int z,int y) {
   return (y*CN+z)*CN+x;
 }
@@ -152,39 +152,29 @@ void clouds() {
   }
 }
 
-// The illuminated lunar hemisphere is projected onto an actual sphere. The
-// sun vector sets the direction of the bright limb in the local east/up basis.
-C crescent(C air, float azimuth, float elevation) {
-  float da=azimuth-moonAz, se=sinf(elevation), ce=cosf(elevation);
-  float u=ce*sinf(da)/moonRadius;
-  float v=(se*cosf(moonAlt)-ce*sinf(moonAlt)*cosf(da))/moonRadius;
-  float r2=u*u+v*v;
-  if (r2>1.3f || cosf(da)<0.f) return air;
-  float sphereDepth=sqrtf(max(0.f,1.f-r2));
-  float delta=sunAz-moonAz;
-  float east=cosf(sunAlt)*sinf(delta);
-  float up=sinf(sunAlt)*cosf(moonAlt)-cosf(sunAlt)*sinf(moonAlt)*cosf(delta);
-  float toward=-(sinf(sunAlt)*sinf(moonAlt)+cosf(sunAlt)*cosf(moonAlt)*cosf(delta));
-  float incidence=u*east+v*up+sphereDepth*toward;
-  float disc=1.f-smooth(.87f,1.15f,sqrtf(r2));
-  float sunlit=smooth(-.045f,.17f,incidence)*(.88f+.12f*sqrtf(max(0.f,incidence)));
-  C earthshine=blend(air,{182,194,225},.055f);
-  return blend(air,blend(earthshine,{255,244,216},sunlit),disc);
+struct IceLayer {
+  C color; // Straight, unassociated sRGB scattering colour in 0…255.
+  float opacity;
+};
+
+float solarWarmth(float azimuth) {
+  float azdiff=acosf(clamp(cosf(azimuth-sunAz),-1.f,1.f));
+  return expf(-powf(azdiff/.92f,2.22f));
 }
 
 // A seven-kilometre ice layer carries a feathered, curved stream of falling
 // crystals. The shear, spacing and finite longitudinal extent vary independently.
-C highClouds(C air, float sx, float sz, float elevation, float warmth) {
+IceLayer highClouds(float sx, float sz, float elevation, float warmth) {
+  C thinIce=blend({205,175,213},{255,211,160},warmth);
   float m=sinf(elevation);
-  if (m<.012f) return air;
+  if (m<.012f) return {thinIce,0.f};
   float x=sx*7.6f/(m+.018f), z=sz*7.6f/(m+.018f);
   float swirl=fb(x*.14f+23,z*.16f+45)-.5f;
   float drift=fb(x*.08f+z*.036f+33,z*.56f-x*.13f+swirl*2.0f+5);
   float mantle=fb(x*.072f+48,z*.077f+17);
   float hair=fb(x*.16f+44,z*2.3f-x*.36f+swirl*3.6f+23);
   float veil=smooth(.40f,.72f,drift)*smooth(.31f,.72f,mantle)*(.32f+.87f*hair);
-  C thinIce=blend({205,175,213},{255,211,160},warmth);
-  air=blend(air,thinIce,veil*.41f*smooth(.016f,.075f,m));
+  float veilOpacity=veil*.41f*smooth(.016f,.075f,m);
 
   // Cirrus uncinus starts in little fallstreak-generating cells. Each tuft has
   // a finite hooked tail as the descending crystals encounter a different wind.
@@ -196,9 +186,12 @@ C highClouds(C air, float sx, float sz, float elevation, float warmth) {
     {-5.9f,18.3f, 5.7f,.80f,-1.33f,-.12f,.68f},
     {-.5f,16.6f, 7.8f,1.05f,-1.78f,-.18f,.97f},
     { 4.4f,14.4f, 5.0f,.76f, 1.47f, .03f,.62f},
-    {10.2f,15.5f, 4.6f,.52f,-1.08f,-.24f,.57f}
+    {10.2f,15.5f, 4.6f,.52f,-1.08f,-.24f,.57f},
+    // A light source cell just west of the lunar direction allows wind to draw
+    // a short veil over the limb during the journey.
+    {3.85f,19.72f,4.9f,.64f,.87f,.32f,1.05f}
   };
-  if (x < -21.f || x > 20.f || z < 9.f || z > 23.f) return air;
+  if (x < -21.f || x > 20.f || z < 9.f || z > 23.f) return {thinIce,veilOpacity};
   float tau=0.f, upper=0.f;
   float eddy=fb(x*.33f+22,z*.37f+37)-.5f;
   float shear=fb(x*.42f+45,z*.20f+62)-.5f;
@@ -222,18 +215,18 @@ C highClouds(C air, float sx, float sz, float elevation, float warmth) {
     tau+=amount;
     upper+=amount*clamp(.60f-drift*.23f+.23f*(fiber-.5f)+head*.12f);
   }
-  if (tau<.002f) return air;
+  if (tau<.002f) return {thinIce,veilOpacity};
   C iceShade=blend({157,140,195},{225,137,158},warmth);
   C iceSun=blend({249,168,193},{255,208,147},warmth);
   C ice=blend(iceShade,iceSun,clamp(upper/tau));
-  return blend(air,ice,1.f-expf(-tau*1.19f));
+  float fallOpacity=1.f-expf(-tau*1.19f);
+  float visibleVeil=(1.f-fallOpacity)*veilOpacity;
+  float opacity=fallOpacity+visibleVeil;
+  return {(ice*fallOpacity+thinIce*visibleVeil)*(1.f/opacity),opacity};
 }
 
-C sky(float a,float el,int px,int py) {
-  float h=max(el,0.f), m=sinf(h);
-  float azdiff=acosf(clamp(cosf(a-sunAz),-1.f,1.f));
-  float glow=expf(-powf(azdiff/.92f,2.22f));
-  float sx=sinf(a)*cosf(h), sz=cosf(a)*cosf(h);
+C clearSky(float a,float h,float glow) {
+  float m=sinf(h);
   float sunD=acosf(clamp(cosf(h)*cosf(sunAlt)*cosf(a-sunAz)+m*sinf(sunAlt),-1.f,1.f));
 
   // Long optical paths on the solar side carry copper, apricot and rose. The
@@ -248,12 +241,26 @@ C sky(float a,float el,int px,int py) {
   col=blend(col,{255,192,108},.49f*expf(-sunD*4.9f));
   col=blend(col,{255,226,150},.74f*expf(-sunD*21.f));
   col=blend(col,{255,252,221},1.f-smooth(.0041f,.0051f,sunD));
-  col=crescent(col,a,h);
-  col=highClouds(col,sx,sz,h,glow);
+  return col;
+}
+
+// Each low-cloud sample scatters its own colour plus a fraction of the incident
+// sky through distance haze. The coefficient of incoming sky is therefore the
+// terminal transmittance plus those small, differently weighted haze terms.
+struct LowSky {
+  C color;
+  float incidentTransmission;
+};
+
+LowSky sky(float a,float el,int px,int py) {
+  float h=max(el,0.f), m=sinf(h), glow=solarWarmth(a);
+  float sx=sinf(a)*cosf(h), sz=cosf(a)*cosf(h);
+  C col=clearSky(a,h,glow);
+  float incidentTransmission=1.f;
   if (h>.006f) {
     float t=base/max(m,.001f),end=min(54.f,(base+thick)/max(m,.001f));
     if (end>t) {
-      float step=clamp((end-t)/47.f,.065f,.22f),trans=1;
+      float step=clamp((end-t)/47.f,.065f,.22f),trans=1, hazeTransmission=0.f;
       C scatter{0,0,0};
       float rnd=.4f+unit(px*7963u+py*9703u)*.2f;
       t+=step*rnd;
@@ -280,15 +287,18 @@ C sky(float a,float el,int px,int py) {
         float rim=expf(-d*2.1f)*smooth(.38f,.96f,lit)*(.17f+.22f*glow);
         local=blend(local,blend({255,196,209},{255,229,161},glow),rim);
         float distHaze=clamp((t-9.f)/58.f,0,.49f);
-        local=blend(local,col,distHaze*.72f);
+        float hazeMix=distHaze*.72f;
+        local=blend(local,col,hazeMix);
         float tau=1-expf(-d*step*1.55f);
+        hazeTransmission+=trans*tau*hazeMix;
         scatter=scatter+local*(trans*tau);
         trans*=1-tau;
       }
+      incidentTransmission=trans+hazeTransmission;
       col=scatter+col*trans;
     }
   }
-  return col;
+  return {col,clamp(incidentTransmission)};
 }
 // Mountain relief combines overlapping volcanic cones and distorted radial ribs.
 // Hydraulic erosion subsequent to construction carves the fine drainage network.
@@ -298,6 +308,7 @@ std::vector<float> terrain(N*N),slx(N*N),slz(N*N),trees(N*N);
 std::vector<C> surface(N*N);
 std::vector<uint8_t> img;
 std::vector<uint16_t> depth;
+std::vector<float> skyTransmission;
 int W,H;
 float cone(float x,float z,float cx,float cz,float ax,float az,float amp,float rot,float expn) {
   float X=(x-cx)*cosf(rot)+(z-cz)*sinf(rot),Z=-(x-cx)*sinf(rot)+(z-cz)*cosf(rot);
@@ -555,6 +566,8 @@ void draw() {
   H=W/2;
   img.resize(size_t(W)*H*3);
   depth.assign(size_t(W)*H,65535);
+  int skyRows=(H+1)/2;
+  skyTransmission.assign(size_t(W)*skyRows,0.f);
 #pragma omp parallel for schedule(dynamic,1)
   for (int x=0;x<W;x++) {
     float a=((x+.5f)/W-.5f)*2*pi,sx=sinf(a),sz=cosf(a);
@@ -562,7 +575,9 @@ void draw() {
     C haze=blend({187,155,170},{220,174,153},expf(-sq(acosf(clamp(cosf(a-sunAz),-1,1))/1.25f)));
     for (int y=0;y<H/2+5;y++) {
       float el=(.5f-(y+.5f)/H)*pi;
-      pixel(x,y,sky(a,el,x,y));
+      LowSky light=sky(a,el,x,y);
+      pixel(x,y,light.color);
+      if (y<skyRows) skyTransmission[y*W+x]=light.incidentTransmission;
     }
     int limit=H;
     float lastH=H+.5f;
@@ -585,6 +600,7 @@ void draw() {
           float f=clamp((row+.5f-y)/max(.6f,lastH-y));
           pixel(x,row,blend(c,prev,f));
           depth[row*W+x]=uint16_t(r);
+          if (row<skyRows) skyTransmission[row*W+x]=0.f;
         }
         prev=c;
         limit=top;
@@ -643,15 +659,77 @@ void plantForest() {
         C bg{float(img[p*3]),float(img[p*3+1]),float(img[p*3+2])};
         out=blend(bg,out,coverage*.83f);
         pixel(px,yy,out);
+        if (yy<(H+1)/2) skyTransmission[p]*=1.f-coverage*.83f;
         if (coverage>.49f)depth[p]=uint16_t(r);
       }
     }
   }
 }
 
+constexpr int layerWidth=2048, bandHeight=512;
+
+uint8_t byteValue(float value) {
+  return static_cast<uint8_t>(clamp(value,0.f,255.f)+.5f);
+}
+
+void setRGBA(std::vector<uint8_t>& atlas,int index,C color,float alpha) {
+  atlas[index]=byteValue(color.r);
+  atlas[index+1]=byteValue(color.g);
+  atlas[index+2]=byteValue(color.b);
+  atlas[index+3]=byteValue(alpha*255.f);
+}
+
+// Integrate subpixel cloud transparency and terrain/forest silhouettes over an
+// atlas texel. At normal export resolution a texel covers exactly 3.5×3.5 pixels.
+float filteredTransmission(int x,int y) {
+  float stepX=W/float(layerWidth),stepY=H/(2.f*bandHeight);
+  float x0=x*stepX,y0=y*stepY,x1=(x+1)*stepX,y1=(y+1)*stepY;
+  float weighted=0.f;
+  for (int iy=int(floorf(y0));iy<int(ceilf(y1));iy++) {
+    float dy=min(y1,iy+1.f)-max(y0,float(iy));
+    for (int ix=int(floorf(x0));ix<int(ceilf(x1));ix++) {
+      float dx=min(x1,ix+1.f)-max(x0,float(ix));
+      weighted+=skyTransmission[iy*W+ix]*dx*dy;
+    }
+  }
+  return weighted/(stepX*stepY);
+}
+
+bool writeAtlas(const char* path) {
+  std::vector<uint8_t> atlas(size_t(layerWidth)*2*bandHeight*4);
+#pragma omp parallel for schedule(static)
+  for (int y=0;y<bandHeight;y++) {
+    for (int x=0;x<layerWidth;x++) {
+      C incident{0,0,0}, scattered{0,0,0}, potential{0,0,0};
+      float opacity=0.f;
+      // Average scattering in premultiplied form, then store unassociated RGB.
+      // Keep a plausible colour even where a perfectly clear texel has zero alpha.
+      for (int j=0;j<2;j++) for (int i=0;i<2;i++) {
+        float az=((x+(i+.5f)*.5f)/layerWidth-.5f)*2*pi;
+        float el=(1.f-(y+(j+.5f)*.5f)/bandHeight)*(.5f*pi);
+        float warmth=solarWarmth(az), cosEl=cosf(el);
+        incident=incident+clearSky(az,el,warmth);
+        IceLayer ice=highClouds(sinf(az)*cosEl,cosf(az)*cosEl,el,warmth);
+        scattered=scattered+ice.color*ice.opacity;
+        potential=potential+ice.color;
+        opacity+=ice.opacity;
+      }
+      int index=4*(y*layerWidth+x);
+      setRGBA(atlas,index,incident*.25f,filteredTransmission(x,y));
+      C straight=opacity>1e-7f?scattered*(1.f/opacity):potential*.25f;
+      setRGBA(atlas,index+4*bandHeight*layerWidth,straight,opacity*.25f);
+    }
+  }
+  FILE* file=fopen(path,"wb");
+  if (!file) return false;
+  fprintf(file,"P7\nWIDTH %d\nHEIGHT %d\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n",layerWidth,2*bandHeight);
+  bool complete=fwrite(atlas.data(),1,atlas.size(),file)==atlas.size();
+  return fclose(file)==0 && complete;
+}
+
 int main(int argc,char**argv) {
-  if (argc<3) {
-    fprintf(stderr,"Usage: generate_panorama width output.ppm\n");
+  if (argc<3 || argc>4) {
+    fprintf(stderr,"Usage: generate_panorama width output.ppm [sky-layers.pam]\n");
     return 2;
   }
   W=atoi(argv[1]);
@@ -667,7 +745,8 @@ int main(int argc,char**argv) {
   FILE* f=fopen(argv[2],"wb");
   if (!f)return 1;
   fprintf(f,"P6\n%d %d\n255\n",W,H);
-  fwrite(img.data(),1,img.size(),f);
-  fclose(f);
+  bool complete=fwrite(img.data(),1,img.size(),f)==img.size();
+  if (fclose(f)!=0 || !complete) return 1;
+  if (argc==4 && !writeAtlas(argv[3])) return 1;
   return 0;
 }

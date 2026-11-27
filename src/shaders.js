@@ -7,13 +7,38 @@ vec4 projectPoint(vec3 p){
 }
 `;
 const PANORAMA=`
-uniform sampler2D uSky;
+uniform sampler2D uSky,uSkyLayers;
 uniform float uTravel,uClock;
+uniform vec2 uCloudOffset;
+vec2 skyUV(vec3 d){
+  return vec2(fract(.5+atan(d.x,-d.z)*.159154943),.5-asin(clamp(d.y,-1.,1.))*.318309886);
+}
 vec3 sphereColor(vec3 d){
-  float g=1.-smoothstep(.35,.62,d.y);
-  d=normalize(d+vec3((uTravel-166.)*(.000060*g)+uClock*.000027*(1.-g),0.,0.));
-  vec2 uv=vec2(fract(.5+atan(d.x,-d.z)*.159154943),.5+asin(clamp(d.y,-1.,1.))*.318309886);
-  return texture2D(uSky,uv).rgb;
+  float parallax=(uTravel-166.)*.000060*(1.-smoothstep(.35,.62,d.y));
+  vec2 farUV=skyUV(normalize(d+vec3(parallax,0.,0.)));
+  vec3 base=texture2D(uSky,vec2(farUV.x,1.-farUV.y)).rgb;
+  if(farUV.y>=.5)return base;
+  const float margin=.00048828125;
+  // In the upper band alpha is the optical transmission past the mountains and
+  // lower clouds. Both bands store premultiplied light, including their edges.
+  vec4 air=texture2D(uSkyLayers,vec2(farUV.x,1.-clamp(farUV.y,margin,.5-margin)));
+  if(air.a<.002)return base;
+  vec3 windRay=normalize(d+vec3(uCloudOffset.x,0.,uCloudOffset.y)*max(d.y,0.));
+  vec2 cloudUV=skyUV(windRay);
+  vec4 ice=texture2D(uSkyLayers,vec2(cloudUV.x,.5-clamp(cloudUV.y,margin,.5-margin)));
+  vec3 result=base+air.a*ice.rgb-ice.a*air.rgb;
+  if(dot(d,vec3(${lunar.direction.map(x=>x.toFixed(10)).join(',')}))>.99996){
+    vec2 moon=(skyUV(d)-vec2(${lunar.u.toFixed(10)},${lunar.v.toFixed(10)}))*
+              vec2(${lunar.scaleX.toFixed(8)},-${lunar.scaleY.toFixed(8)});
+    float r2=dot(moon,moon);
+    float incidence=dot(vec3(moon,sqrt(max(0.,1.-r2))),
+      vec3(${lunar.east.toFixed(10)},${lunar.up.toFixed(10)},${lunar.depth.toFixed(10)}));
+    float lit=smoothstep(-.045,.17,incidence)*(.88+.12*sqrt(max(0.,incidence)));
+    float disc=(1.-smoothstep(.87,1.15,sqrt(r2)))*(1.-ice.a);
+    float dark=.055*(1.-lit);
+    result+=disc*(air.a*(lit*vec3(255.,244.,216.)+dark*vec3(182.,194.,225.))/255.-(lit+dark)*air.rgb);
+  }
+  return clamp(result,0.,1.);
 }
 `;
 const QUAD_VS=`attribute vec2 aCorner;varying vec2 vUv;

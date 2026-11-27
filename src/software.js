@@ -17,6 +17,7 @@ class SoftwareJourney {
   constructor(canvas,sky){
     this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false});this.sky=readPlate(sky,4096);
     const shell=byId('cabin');this.cabin=shell&&shell.naturalWidth?readPlate(shell,4096):null;
+    this.weather=new SoftwareSkyLayers(byId('sky-layers'));
     const leaf=makeTreeAtlas();this.atlas=[1,.5,.25,.125,.0625].map(s=>textureLevel(leaf,leaf.width*s,leaf.height*s));
     const grain=noiseSheet();this.noise=grain.getContext('2d').getImageData(0,0,grain.width,grain.height).data;
     const land=new Geometry(null,true);buildCountryside(land);buildTunnels(land);
@@ -47,7 +48,7 @@ class SoftwareJourney {
     const W=this.W,H=this.H,F=this.focal,sky=this.sky,room=this.cabin;
     // Interpolate a rectilinear-to-spherical map in small blocks. Treat the wrap
     // discontinuity explicitly so the longitudinal seam never passes through the aisle.
-    const block=12,xs=Math.ceil(W/block),ys=Math.ceil(H/block),stride=6;
+    const block=12,xs=Math.ceil(W/block),ys=Math.ceil(H/block),stride=8;
     const map=new Float32Array((xs+1)*(ys+1)*stride);let j=0;
     for(let by=0;by<=ys;by++)for(let bx=0;bx<=xs;bx++){
       const dx=(Math.min(W,bx*block)-W/2)/F,dy=(H/2-Math.min(H,by*block))/F;
@@ -64,27 +65,49 @@ class SoftwareJourney {
       if(Math.abs(x)>.001)reach=Math.min(reach,Math.max(.12,((x>0?8.66:-8.66)-hx)/x));
       const rx=hx+x*reach, ry=hy+y*reach-1.49, rz=hz+dz*reach+.26;
       map[j++]=Math.atan2(rx,-rz)/TAU+.5;map[j++]=.5-Math.asin(clamp(ry/(Math.hypot(rx,ry,rz)||1),-1,1))/Math.PI;
+      const cloudX=x+this.cloudWind[0]*Math.max(y,0),cloudZ=z+this.cloudWind[1]*Math.max(y,0);
+      map[j++]=Math.atan2(cloudX,-cloudZ)/TAU+.5;
+      map[j++]=.5-Math.asin(clamp(y/Math.hypot(cloudX,y,cloudZ),-1,1))/Math.PI;
     }
-    const top=new Float64Array(6),bot=new Float64Array(6),du=new Float64Array(6),dv=new Float64Array(6),pos=new Float64Array(6),step=new Float64Array(6);
+    const top=new Float64Array(stride),bot=new Float64Array(stride),du=new Float64Array(stride),dv=new Float64Array(stride),pos=new Float64Array(stride),step=new Float64Array(stride);
     for(let by=0;by<ys;by++)for(let bx=0;bx<xs;bx++){
       const x0=bx*block,y0=by*block,bw=Math.min(block,W-x0),bh=Math.min(block,H-y0),a=(by*(xs+1)+bx)*stride,b=a+stride,c=a+(xs+1)*stride,d=c+stride;
-      for(let k=0;k<6;k++){
+      for(let k=0;k<stride;k++){
         let A=map[a+k],B=map[b+k],C=map[c+k],D=map[d+k];
         if(!(k&1)){B-=Math.round(B-A);C-=Math.round(C-A);D-=Math.round(D-C);}
         top[k]=A;bot[k]=(C-A)/bh;du[k]=(B-A)/bw;dv[k]=((D-C)/bw-du[k])/bh;
       }
       for(let y=0;y<bh;y++){
         let off=(y0+y)*W+x0;
-        for(let k=0;k<6;k++){pos[k]=top[k]+bot[k]*(y+.5);step[k]=du[k]+dv[k]*(y+.5);}
+        for(let k=0;k<stride;k++){step[k]=du[k]+dv[k]*(y+.5);pos[k]=top[k]+bot[k]*(y+.5)+step[k]*.5;}
         let su=pos[0]*sky.w,sv=pos[1]*sky.h,ru=room?pos[2]*room.w:0,rv=room?pos[3]*room.h:0,mu=room?pos[4]*room.w:0,mv=room?pos[5]*room.h:0;
         const dsu=step[0]*sky.w,dsv=step[1]*sky.h,dru=room?step[2]*room.w:0,drv=room?step[3]*room.h:0,dmu=room?step[4]*room.w:0,dmv=room?step[5]*room.h:0;
         for(let x=0;x<bw;x++,off++,su+=dsu,sv+=dsv,ru+=dru,rv+=drv,mu+=dmu,mv+=dmv){
-          this.env[off]=sky.data[Math.min(sky.h-1,Math.max(0,sv|0))*sky.w+((su|0)&(sky.w-1))];
+          const background=sky.data[Math.min(sky.h-1,Math.max(0,sv|0))*sky.w+((su|0)&(sky.w-1))];
           if(room){this.shell[off]=room.data[Math.min(room.h-1,Math.max(0,rv|0))*room.w+((ru|0)&(room.w-1))];
             this.ref[off]=room.data[Math.min(room.h-1,Math.max(0,mv|0))*room.w+((mu|0)&(room.w-1))];}
+          const optics=(this.shell[off]>>>24)!==255?this.weather.optics(su/sky.w,sv/sky.h):0;
+          this.env[off]=(optics>>>24)?this.weather.composite(background,optics,
+            pos[2]+x*step[2],pos[3]+x*step[3],pos[6]+x*step[6],pos[7]+x*step[7]):background;
         }
       }
     }
+  }
+  lakeEnvironment(xi,zi,dist,slope,azRipple,elRipple){
+    // Reflect the camera ray about the water plane, then sample the same three
+    // angular frames as the visible sky. The ripple offsets perturb all three.
+    const sky=this.sky, horizontal=1/Math.sqrt(1+slope*slope),dx=xi/dist*horizontal,dz=zi/dist*horizontal,dy=slope*horizontal;
+    const landX=dx+(this.travel-166)*.000060*(1-smooth(.35,.62,dy));
+    const farU=.5+Math.atan2(landX,-dz)/TAU+azRipple;
+    const farV=.5-Math.atan2(dy,Math.sqrt(landX*landX+dz*dz))/Math.PI+elRipple;
+    const base=sky.data[clamp(Math.floor(farV*sky.h),0,sky.h-1)*sky.w+(Math.floor(farU*sky.w)&(sky.w-1))];
+    const optics=this.weather.optics(farU,farV);
+    if(!(optics>>>24))return base;
+    const cloudX=dx+this.cloudWind[0]*dy,cloudZ=dz+this.cloudWind[1]*dy;
+    const u=.5+Math.atan2(dx,-dz)/TAU+azRipple,v=.5-Math.atan(slope)/Math.PI+elRipple;
+    const cloudU=.5+Math.atan2(cloudX,-cloudZ)/TAU+azRipple;
+    const cloudV=.5-Math.atan2(dy,Math.sqrt(cloudX*cloudX+cloudZ*cloudZ))/Math.PI+elRipple;
+    return this.weather.composite(base,optics,u,v,cloudU,cloudV);
   }
   visible(part,travel,frame){
     const dx=part.x-travel,dz=part.z+.26,r=part.rad+48;if(Math.abs(dx)>1260+r)return false;
@@ -140,9 +163,8 @@ class SoftwareJourney {
           }
           if(light&&ground){const lx=clamp((wx+768)*light.w/4608|0,0,light.w-1),ly=clamp((wz+960)*light.h/1920|0,0,light.h-1);tone*=(light.data[ly*light.w+lx]&255)/255;}
         }else if(water){
-          const zi=wz+.26,xi=wx-travel,dist=Math.sqrt(xi*xi+zi*zi),slope=(this.eye+14)/Math.max(1,dist);
-          const u=.5+Math.atan2(xi+(travel-166)*.00006*dist,-zi)/TAU,v=.5-Math.atan(slope)/Math.PI;
-          const tex=sky.data[(clamp((v*sky.h+(noise[ni+1]-128)*.032)|0,0,sky.h-1))*sky.w+(((u*sky.w+(noise[ni]-127)*.045)|0)&(sky.w-1))];
+          const zi=wz+.26,xi=wx-travel,dist=Math.max(1,Math.sqrt(xi*xi+zi*zi)),slope=(this.eye+14)/dist;
+          const tex=this.lakeEnvironment(xi,zi,dist,slope,(noise[ni]-127)*.045/sky.w,(noise[ni+1]-128)*.032/sky.h);
           const rip=.94+noise[ni+1]*.00042;
           const wind=this.wind,wr=((((wz*6.7+wind)|0)&255)*256+(((wx*.97+wind*.34)|0)&255))*4;
           const glint=noise[wr+1]/255-.5;
@@ -208,12 +230,12 @@ class SoftwareJourney {
   }
   draw(state,w,h,now){
     const gap=now-this.lastDraw;if(gap<28&&this.frame)return;
-    this.resize(w,h);this.lastDraw=now;const t=state.t;this.travel=t*14;this.cover=boreCover(this.travel);
+    this.resize(w,h);this.lastDraw=now;const t=state.t;this.travel=t*14;this.cover=boreCover(this.travel);this.cloudWind=cloudOffset(t);
     this.focal=this.H*.5/Math.tan(state.fov*DEG*.5);const f=cameraFrame(state.yaw,state.pitch),roll=.00135*Math.sin(t*1.57);
     const frame=cameraFrame(state.yaw,state.pitch+.00076*Math.sin(t*1.81),roll);this.eye=1.49+.0052*Math.sin(t*2.2);
     const half=Math.atan(Math.hypot(this.H,this.W)/(2*this.focal));this.cosHalf=Math.cos(half);this.sinHalf=Math.sin(half);
     const pose=[state.yaw,state.pitch,state.fov,this.travel];const old=this.lastPose;
-    if(!old||Math.abs(old[0]-pose[0])>.0007||Math.abs(old[1]-pose[1])>.0007||Math.abs(old[2]-pose[2])>.04||Math.abs(old[3]-pose[3])>11){this.environment(f,this.travel);this.lastPose=pose;}
+    if(!old||Math.abs(old[0]-pose[0])>.0007||Math.abs(old[1]-pose[1])>.0007||Math.abs(old[2]-pose[2])>.04||Math.abs(old[3]-pose[3])>5){this.environment(f,this.travel);this.lastPose=pose;}
     const nearExit=Math.max(this.travel>=79?Math.exp(-(this.travel-79)/16):0,this.travel>=1581?Math.exp(-(this.travel-1581)/18):0);
     this.exposure=1+nearExit*.30;this.adaptation=.68+.68*this.cover;this.shutter=state.playing?1:0;this.wind=t*.27;
     this.out.set(this.env);this.depth.fill(0);this.landscape(t,frame);

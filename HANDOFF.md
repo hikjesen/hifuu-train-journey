@@ -4,18 +4,13 @@
 
 ## 天空实验分支
 
-`experiment/dream-sky` 从 `main` 的 `ead91c1` 分出。车窗左侧的落日从杏金渐入玫瑰色，右侧晴空由淡紫转深蓝。旭岳上方有随风弯折的高空卷云，山顶右侧的云隙露出一弯月牙。太阳位置同时决定月牙的朝向和体积云的受光面。[在线播放](https://hifuu-asahidake-dream-sky.workspace-817094.chatgpt.site) · [开场同机位对照图](preview/sky-comparison.jpg)
+`experiment/dream-sky` 从 `main` 的 `ead91c1` 分出。低空的杏金色渐入玫瑰粉和蓝紫色，旭岳右侧有一弯朝向落日的月牙。天上的卷云随风横过雪峰，湖面按反射方向采样同一片天空。[在线播放](https://hifuu-asahidake-dream-sky.workspace-817094.chatgpt.site) · [六秒延时片段](preview/cloud-drift.mp4)
 
-从车窗复验时，暂停在 13.6 秒，回到默认座位，垂直视角保持 57°。对照图上下两幅分别取自主线与实验版，使用相同的相机、投影和裁剪。
+在默认座位暂停于 00:14、02:40 和 03:17，可以看到月牙从晴空中显露到被卷云遮住大半。时间和风场绑定，暂停、定位与黑场循环都会保留对应的云位。延时片段以 14 倍速播放 02:00 至 03:24。第一版的[静态调色对照](preview/sky-comparison.jpg)保留在仓库，代码版本为 `01f43fe`。
 
-天空在 `tools/generate_panorama.cpp` 中生成。`highClouds` 控制高云的形状，`crescent` 控制月相，`sky` 处理暮光和中低层云。按源码开头的命令重建 7168 × 3584 的 `src/horizon.jpg` 后，运行 `python3 tools/assemble.py` 更新离线成片。WebGL、软件渲染和湖面倒影都读取同一份全景。
+`tools/generate_panorama.cpp` 生成 7168 × 3584 的地形及低云底图和 2048 × 1024 的无损天气图集。图集上半幅保存晴空颜色和低云、山脊的透射率，下半幅保存卷云颜色和覆盖率。`src/atmosphere.js` 中的 `cloudOffset` 控制 7.6 公里高度的风场，月球投影固定在世界方向。`src/shaders.js` 和 `src/software.js` 分别实现 GPU 与软件合成。
 
-公开分支和在线发布版分别从同一份源码构建。按交付版本核对下表中的 SHA-256。在线版本的源码提交为 `32818dcaafc5c8346dbb2f4d6791043d453de4e0`。
-
-| 交付版本 | 全景 JPEG | 独立 HTML |
-| --- | --- | --- |
-| 公开分支 | `f563656a1a241e6fa80684a90d052d53abe7e75094aa6211442bec3c88578841` | `9d126c3dfab39d8878aa5d82a7b22c125a481ac916458ae7f79faae0b1f9601f` |
-| 在线发布版 | `952f970b8896aa847b4c417a13aad7b500aa51cbe774131714d47b85440dbdd1` | `ab5a93eb1ffba6a7494f5c2c3b6bf619b41523f6f929b11b33a8f78712bad752` |
+按 C++ 文件开头的四条命令重建 `src/horizon.jpg` 和 `src/sky-layers.webp`，再运行 `python3 tools/assemble.py` 更新离线 HTML。本版成片 SHA-256 为 `217158acfb6c139598843bd589de366b215fe53785a3e9871fb10303b544ace4`。
 
 ## 开发接续
 

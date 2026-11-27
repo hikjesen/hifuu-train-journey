@@ -29,6 +29,7 @@ class JourneyRenderer{
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
     this.cabinBake=this.texture(document.getElementById("cabin"),false,true);this.horizon=this.texture(pano,false,true);this.grain=this.texture(noiseSheet(),true,false);
+    this.skyLayers=this.texture(document.getElementById('sky-layers'),false,false,true);
     const labels=new LabelSheet(),cabin=new Geometry(labels),land=new Geometry(labels,true);
     buildCarriage(cabin);buildCountryside(land);buildTunnels(land);
     const treeList=[];for(const p of land.trees.values())for(let i=0;i<p.values.length;i+=54)treeList.push(p.values.slice(i,i+7));
@@ -51,13 +52,13 @@ class JourneyRenderer{
     for(let i=0;i<gl.getProgramParameter(p,gl.ACTIVE_ATTRIBUTES);i++){const n=gl.getActiveAttrib(p,i).name;a[n]=gl.getAttribLocation(p,n);}
     return {p,u,a};
   }
-  texture(source,repeat,aniso){
+  texture(source,repeat,aniso,premultiply=false){
     const gl=this.gl,limit=gl.getParameter(gl.MAX_TEXTURE_SIZE);
     let w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;
     if(w>limit||h>limit){const s=Math.min(limit/w,limit/h);const cv=document.createElement('canvas');cv.width=Math.floor(w*s);cv.height=Math.floor(h*s);cv.getContext('2d').drawImage(source,0,0,cv.width,cv.height);source=cv;w=cv.width;h=cv.height;}
     const power=(x)=>(x&(x-1))===0,mip=power(w)&&power(h);const tex=gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,premultiply);
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,source);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,mip?gl.LINEAR_MIPMAP_LINEAR:gl.LINEAR);
@@ -143,7 +144,8 @@ class JourneyRenderer{
       return Math.max(s,inside>0&&out<0?(1-Math.exp(-inside/23)):out>=0?Math.exp(-out/18):0);},0);
     const exposed=(travel>79? .27*Math.exp(-(travel-79)/13):0)+(travel>1581?.34*Math.exp(-(travel-1581)/20):0);
     const kit={uCabinBake:{tex:this.cabinBake,slot:7},uNear:1.05,uLandLight:{tex:this.landLight,slot:6},uLens:[tangent*aspect,tangent],base,uClock:t,uTravel:travel,uOrigin:travel,uInterior:0,uMirror:0,uCabinLight:1-cover*.92,uAdapt:.65+.97*score,
-      uSky:{tex:this.horizon,slot:0},uGrain:{tex:this.grain,slot:1},uLabels:{tex:this.labels,slot:2},uTrees:{tex:this.atlas,slot:3}};
+      uSky:{tex:this.horizon,slot:0},uGrain:{tex:this.grain,slot:1},uLabels:{tex:this.labels,slot:2},uTrees:{tex:this.atlas,slot:3},
+      uSkyLayers:{tex:this.skyLayers,slot:4},uCloudOffset:cloudOffset(t)};
     this.dest(this.scene);gl.clearColor(.05,.045,.05,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.disable(gl.DEPTH_TEST);
     this.screen(this.skyP,kit,base);gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);
     this.meshes(this.meshP,this.world,kit,base,false,true);this.meshes(this.treeP,this.trees,kit,base,true,true);
